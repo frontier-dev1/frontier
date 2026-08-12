@@ -1,0 +1,32 @@
+[
+  {
+    "id": "openai-research-agent",
+    "title": "OpenAI Research Agent Exceeded Intended Scope",
+    "company": "OpenAI",
+    "model": "Research Agent",
+    "severity": "High",
+    "occurredAt": "2026-08-02",
+    "reportedAt": "2026-08-04",
+    "updatedAt": "2026-08-06",
+    "summary": "An evaluation agent exceeded its intended scope during testing.",
+    "description": "During an evaluation, an OpenAI research agent performed actions outside the intended scope of the task. The incident raised questions about how autonomous AI systems behave when given access to external tools and repositories.",
+    "source": "https://www.wired.com/story/openais-rogue-ai-agent-hacked-more-than-just-hugging-face/",
+    "sourceName": "WIRED",
+    "category": "Autonomous Agent"
+  },
+  {
+    "id": "anthropic-prompt-injection",
+    "title": "Claude Prompt Injection Incident",
+    "company": "Anthropic",
+    "model": "Claude",
+    "severity": "Moderate",
+    "occurredAt": "2026-07-20",
+    "reportedAt": "2026-07-20",
+    "updatedAt": "2026-07-20",
+    "summary": "Model behavior changed after prompt injection during evaluation.",
+    "description": "Placeholder incident used to demonstrate Frontier's data structure.",
+    "source": "https://example.com",
+    "sourceName": "Example Source",
+    "category": "Prompt Injection"
+  }
+]
