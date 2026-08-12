@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getIncidentById } from "../../../lib/incidents";
+import { createClient } from "../../../lib/supabase/server";
 import SeverityBadge from "../../components/SeverityBadge";
 
 type Props = {
@@ -9,15 +9,16 @@ type Props = {
   }>;
 };
 
-function formatDate(date: string) {
-  return new Date(`${date}T00:00:00`).toLocaleDateString(
-    "en-US",
-    {
-      month: "long",
-      day: "numeric",
-      year: "numeric",
-    }
-  );
+function formatDate(date: string | null) {
+  if (!date) {
+    return "Unknown";
+  }
+
+  return new Date(date).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 export default async function IncidentPage({
@@ -25,15 +26,33 @@ export default async function IncidentPage({
 }: Props) {
   const { id } = await params;
 
-const incident = await getIncidentById(id);
+  const supabase = await createClient();
 
-if (!incident) {
-  notFound();
-}
+  const { data: incident, error } = await supabase
+    .from("incidents")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+
+  /*
+   * If Supabase couldn't retrieve the incident,
+   * show the normal Next.js 404 page.
+   */
+  if (error) {
+    console.error(
+      "Failed to load incident:",
+      error
+    );
+
+    notFound();
+  }
+
+  if (!incident) {
+    notFound();
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
-
       <main className="mx-auto max-w-4xl px-6 py-12">
 
         <Link
@@ -65,7 +84,7 @@ if (!incident) {
               </p>
 
               <p className="mt-1 font-medium">
-                {formatDate(incident.reportedAt)}
+                {formatDate(incident.reported_at)}
               </p>
             </div>
 
@@ -122,7 +141,7 @@ if (!incident) {
             </p>
 
             <h2 className="mt-2 text-xl font-bold">
-              {incident.sourceName}
+              {incident.source_name}
             </h2>
 
             <p className="mt-2 text-sm text-slate-500">
@@ -131,7 +150,7 @@ if (!incident) {
             </p>
 
             <a
-              href={incident.source}
+              href={incident.source_url}
               target="_blank"
               rel="noopener noreferrer"
               className="mt-5 inline-flex rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700"
@@ -144,7 +163,6 @@ if (!incident) {
         </article>
 
       </main>
-
     </div>
   );
 }
