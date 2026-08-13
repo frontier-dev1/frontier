@@ -1,0 +1,20 @@
+name: Frontier Discovery
+
+on:
+  schedule:
+    - cron: "0 */1 * * *"
+
+  workflow_dispatch:
+
+jobs:
+  discovery:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run Frontier discovery
+        run: |
+          curl --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.FRONTIER_CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            https://frontier-eight.vercel.app/api/discovery/run
