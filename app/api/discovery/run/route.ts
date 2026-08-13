@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "../../../../lib/supabase/server";
+import { createAdminClient } from "../../../../lib/supabase/admin";
 import { discoverCandidates } from "../../../../lib/discovery/scraper";
 
 export const dynamic = "force-dynamic";
@@ -68,6 +69,49 @@ export async function POST(request: Request) {
     }
   }
 
+  /*
+   * Use the service-role client for system-level
+   * discovery logging.
+   *
+   * This client NEVER runs in the browser.
+   */
+  const adminSupabase =
+    createAdminClient();
+
+  let discoveryRunId: string | null = null;
+
+  const startedAt = new Date().toISOString();
+
+  /*
+   * Create the discovery run record before
+   * starting the scraper.
+   */
+  try {
+    const { data: run, error } =
+      await adminSupabase
+        .from("discovery_runs")
+        .insert({
+          started_at: startedAt,
+          status: "running",
+        })
+        .select("id")
+        .single();
+
+    if (error) {
+      console.error(
+        "Failed to create discovery run:",
+        error
+      );
+    } else {
+      discoveryRunId = run.id;
+    }
+  } catch (error) {
+    console.error(
+      "Discovery run logging failed:",
+      error
+    );
+  }
+
   try {
     console.log(
       "Frontier discovery started."
@@ -79,10 +123,8 @@ export async function POST(request: Request) {
     let inserted = 0;
 
     for (const candidate of candidates) {
-      const supabase = await createClient();
-
-      const { error } =
-        await supabase
+      const { data, error } =
+        await adminSupabase
           .from("incident_candidates")
           .upsert(
             {
@@ -93,7 +135,8 @@ export async function POST(request: Request) {
               onConflict: "article_url",
               ignoreDuplicates: true,
             }
-          );
+          )
+          .select("id");
 
       if (error) {
         console.error(
@@ -104,7 +147,38 @@ export async function POST(request: Request) {
         continue;
       }
 
-      inserted++;
+      /*
+       * When ignoreDuplicates is true,
+       * Supabase returns no inserted row
+       * when the article already exists.
+       */
+      if (data && data.length > 0) {
+        inserted++;
+      }
+    }
+
+    /*
+     * Mark the discovery run successful.
+     */
+    if (discoveryRunId) {
+      const { error } =
+        await adminSupabase
+          .from("discovery_runs")
+          .update({
+            completed_at:
+              new Date().toISOString(),
+            status: "success",
+            discovered: candidates.length,
+            inserted,
+          })
+          .eq("id", discoveryRunId);
+
+      if (error) {
+        console.error(
+          "Failed to update discovery run:",
+          error
+        );
+      }
     }
 
     console.log(
@@ -121,6 +195,24 @@ export async function POST(request: Request) {
       "Discovery failed:",
       error
     );
+
+    /*
+     * Record the failure in discovery_runs.
+     */
+    if (discoveryRunId) {
+      await adminSupabase
+        .from("discovery_runs")
+        .update({
+          completed_at:
+            new Date().toISOString(),
+          status: "failed",
+          error_message:
+            error instanceof Error
+              ? error.message
+              : "Unknown discovery error",
+        })
+        .eq("id", discoveryRunId);
+    }
 
     return NextResponse.json(
       {
