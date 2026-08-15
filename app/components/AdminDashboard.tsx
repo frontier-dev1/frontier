@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { createClient } from "../../lib/supabase/client";
 import type { Database } from "../../database.types";
@@ -10,11 +11,13 @@ type Incident =
 type Props = {
   initialIncidents: Incident[];
   userEmail: string;
+  activePage?: "overview" | "incidents";
 };
 
 export function AdminDashboard({
   initialIncidents,
   userEmail,
+  activePage = "incidents",
 }: Props) {
   const [incidents, setIncidents] =
     useState<Incident[]>(initialIncidents);
@@ -124,6 +127,28 @@ const severityStyles: Record<string, string> = {
       current.filter((incident) => incident.id !== id)
     );
   }
+    function AdminNavLink({
+        href,
+        children,
+        active = false,
+      }: {
+        href: string;
+        children: React.ReactNode;
+        active?: boolean;
+      }) {
+        return (
+          <Link
+            href={href}
+            className={
+              active
+                ? "rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white"
+                : "rounded-lg px-4 py-2 text-sm font-medium text-slate-500 transition hover:bg-white hover:text-slate-900"
+            }
+          >
+            {children}
+          </Link>
+        );
+    }
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -168,27 +193,32 @@ const severityStyles: Record<string, string> = {
       <main className="mx-auto max-w-7xl px-6 py-8">
 
         {/* Navigation */}
-        <div className="mb-8 flex gap-2 overflow-x-auto">
+        <nav className="mb-8 flex gap-2 overflow-x-auto">
 
-          <button className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white">
+          <AdminNavLink
+            href="/admin"
+            active={activePage === "overview"}
+          >
+            Overview
+          </AdminNavLink>
+
+          <AdminNavLink
+            href="/admin/incidents"
+            active={activePage === "incidents"}
+          >
             Incidents
-          </button>
+          </AdminNavLink>
 
-          <button
-            disabled
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-400"
-          >
+          <AdminNavLink href="/admin/candidates">
             Candidates
-          </button>
+          </AdminNavLink>
 
-          <button
-            disabled
-            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-400"
-          >
-            Sources
-          </button>
+          <AdminNavLink href="/admin/discovery">
+            Discovery
+          </AdminNavLink>
 
-        </div>
+        </nav>
+
 
         {/* Stats */}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

@@ -128,3 +128,11 @@
     @apply font-sans;
   }
 }
+
+.input {
+  @apply w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition;
+}
+
+.input:focus {
+  @apply border-blue-500 ring-2 ring-blue-100;
+}
