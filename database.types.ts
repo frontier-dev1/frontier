@@ -29,8 +29,64 @@ export type Database = {
         }
         Relationships: []
       }
+      discovery_runs: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          discovered: number
+          error_message: string | null
+          id: string
+          inserted: number
+          started_at: string
+          status: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          discovered?: number
+          error_message?: string | null
+          id?: string
+          inserted?: number
+          started_at?: string
+          status?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          discovered?: number
+          error_message?: string | null
+          id?: string
+          inserted?: number
+          started_at?: string
+          status?: string
+        }
+        Relationships: []
+      }
       incident_candidates: {
         Row: {
+          ai_additional_sources: Json
+          ai_category: string | null
+          ai_company: string | null
+          ai_confidence: number | null
+          ai_evidence_quality: number | null
+          ai_evidence_summary: string | null
+          ai_incident_description: string | null
+          ai_incident_summary: string | null
+          ai_intended_behavior: string | null
+          ai_is_incident: boolean | null
+          ai_model: string | null
+          ai_observed_behavior: string | null
+          ai_reasoning: string | null
+          ai_recommendation: string | null
+          ai_review_status: string
+          ai_reviewed_at: string | null
+          ai_scope_violation: string | null
+          ai_severity: string | null
+          article_fetch_status: string | null
+          article_text: string | null
+          article_text_fetched_at: string | null
+          article_text_length: number | null
+          article_text_source: string | null
           article_url: string
           created_at: string
           discovered_at: string
@@ -47,6 +103,29 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ai_additional_sources?: Json
+          ai_category?: string | null
+          ai_company?: string | null
+          ai_confidence?: number | null
+          ai_evidence_quality?: number | null
+          ai_evidence_summary?: string | null
+          ai_incident_description?: string | null
+          ai_incident_summary?: string | null
+          ai_intended_behavior?: string | null
+          ai_is_incident?: boolean | null
+          ai_model?: string | null
+          ai_observed_behavior?: string | null
+          ai_reasoning?: string | null
+          ai_recommendation?: string | null
+          ai_review_status?: string
+          ai_reviewed_at?: string | null
+          ai_scope_violation?: string | null
+          ai_severity?: string | null
+          article_fetch_status?: string | null
+          article_text?: string | null
+          article_text_fetched_at?: string | null
+          article_text_length?: number | null
+          article_text_source?: string | null
           article_url: string
           created_at?: string
           discovered_at?: string
@@ -63,6 +142,29 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ai_additional_sources?: Json
+          ai_category?: string | null
+          ai_company?: string | null
+          ai_confidence?: number | null
+          ai_evidence_quality?: number | null
+          ai_evidence_summary?: string | null
+          ai_incident_description?: string | null
+          ai_incident_summary?: string | null
+          ai_intended_behavior?: string | null
+          ai_is_incident?: boolean | null
+          ai_model?: string | null
+          ai_observed_behavior?: string | null
+          ai_reasoning?: string | null
+          ai_recommendation?: string | null
+          ai_review_status?: string
+          ai_reviewed_at?: string | null
+          ai_scope_violation?: string | null
+          ai_severity?: string | null
+          article_fetch_status?: string | null
+          article_text?: string | null
+          article_text_fetched_at?: string | null
+          article_text_length?: number | null
+          article_text_source?: string | null
           article_url?: string
           created_at?: string
           discovered_at?: string
@@ -148,7 +250,45 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      publish_incident_candidate: {
+        Args: {
+          p_candidate_id: string
+          p_category: string
+          p_company: string
+          p_description: string
+          p_model: string
+          p_occurred_at: string
+          p_severity: string
+          p_summary: string
+          p_title: string
+        }
+        Returns: {
+          additional_sources: Json | null
+          category: string | null
+          company: string
+          created_at: string | null
+          description: string
+          id: string
+          model: string | null
+          occurred_at: string | null
+          reported_at: string | null
+          severity: string
+          source_name: string
+          source_url: string
+          summary: string
+          tags: string[] | null
+          title: string
+          updated_at: string | null
+          updated_at_timestamp: string | null
+          verification_status: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "incidents"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
     }
     Enums: {
       [_ in never]: never

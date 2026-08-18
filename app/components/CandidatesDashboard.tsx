@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { createClient } from "../../lib/supabase/client";
 import type { Database } from "../../database.types";
 
 type Candidate =
@@ -97,6 +96,9 @@ export default function CandidatesDashboard({
   const [publishing, setPublishing] =
     useState(false);
 
+  const [aiReviewing, setAiReviewing] =
+    useState(false);
+
   const filteredCandidates = useMemo(() => {
     if (filter === "all") {
       return candidates;
@@ -110,18 +112,22 @@ export default function CandidatesDashboard({
 
   const counts = {
     all: candidates.length,
+
     pending: candidates.filter(
       (candidate) =>
         candidate.status === "pending"
     ).length,
+
     reviewing: candidates.filter(
       (candidate) =>
         candidate.status === "reviewing"
     ).length,
+
     accepted: candidates.filter(
       (candidate) =>
         candidate.status === "accepted"
     ).length,
+
     rejected: candidates.filter(
       (candidate) =>
         candidate.status === "rejected"
@@ -140,7 +146,8 @@ export default function CandidatesDashboard({
         }
       );
 
-      const result = await response.json();
+      const result =
+        await response.json();
 
       if (!response.ok) {
         throw new Error(
@@ -165,21 +172,249 @@ export default function CandidatesDashboard({
     }
   }
 
-  function openReview(candidate: Candidate) {
-    setReviewingCandidate(candidate);
+  async function runAIReview(
+    candidate: Candidate
+  ) {
+    if (aiReviewing) {
+      return;
+    }
 
-    setReviewForm({
-      title: candidate.title,
-      company: "",
-      model: "",
-      severity: "Moderate",
-      category: "",
-      occurredAt: candidate.published_at
-        ? candidate.published_at.slice(0, 10)
-        : "",
-      summary: candidate.summary ?? "",
-      description: candidate.summary ?? "",
-    });
+    setAiReviewing(true);
+
+    try {
+      /*
+       * If the candidate is still pending,
+       * move it into reviewing first.
+       */
+
+      let currentCandidate =
+        candidate;
+
+      if (
+        candidate.status === "pending"
+      ) {
+        const reviewResponse =
+          await fetch(
+            `/api/admin/candidates/${candidate.id}/review`,
+            {
+              method: "POST",
+            }
+          );
+
+        const reviewResult =
+          await reviewResponse.json();
+
+        if (!reviewResponse.ok) {
+          throw new Error(
+            reviewResult.error ||
+              "Unable to start candidate review."
+          );
+        }
+
+        currentCandidate =
+          reviewResult.candidate;
+
+        setCandidates((current) =>
+          current.map((item) =>
+            item.id === candidate.id
+              ? currentCandidate
+              : item
+          )
+        );
+      }
+
+      /*
+       * Ask the AI reviewer to analyze
+       * the source article.
+       */
+
+      const response =
+        await fetch(
+          `/api/admin/candidates/${candidate.id}/ai-review`,
+          {
+            method: "POST",
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "AI review failed."
+        );
+      }
+
+      /*
+       * Update local state with the
+       * completed AI assessment.
+       */
+
+      setCandidates((current) =>
+        current.map((item) =>
+          item.id === candidate.id
+            ? result.candidate
+            : item
+        )
+      );
+
+      /*
+       * Open the review form with
+       * the AI's extracted information.
+       */
+
+      const reviewed =
+        result.candidate;
+
+      setReviewingCandidate(
+        reviewed
+      );
+
+      setReviewForm({
+        title:
+          reviewed.title,
+
+        company:
+          reviewed.ai_company ??
+          "",
+
+        model:
+          reviewed.ai_model ??
+          "",
+
+        severity:
+          reviewed.ai_severity ??
+          "Moderate",
+
+        category:
+          reviewed.ai_category ??
+          "",
+
+        occurredAt:
+          reviewed.published_at
+            ? reviewed.published_at.slice(
+                0,
+                10
+              )
+            : "",
+
+        summary:
+          reviewed.ai_incident_summary ??
+          reviewed.summary ??
+          "",
+
+        description:
+          reviewed.ai_incident_description ??
+          reviewed.summary ??
+          "",
+      });
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "AI review failed."
+      );
+    } finally {
+      setAiReviewing(false);
+    }
+  }
+
+  async function openReview(
+    candidate: Candidate
+  ) {
+    try {
+      /*
+       * If the candidate is still pending,
+       * move it into the reviewing state
+       * before opening the modal.
+       */
+
+      let currentCandidate =
+        candidate;
+
+      if (
+        candidate.status === "pending"
+      ) {
+        const response =
+          await fetch(
+            `/api/admin/candidates/${candidate.id}/review`,
+            {
+              method: "POST",
+            }
+          );
+
+        const result =
+          await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            result.error ||
+              "Unable to start review."
+          );
+        }
+
+        currentCandidate =
+          result.candidate;
+
+        setCandidates((current) =>
+          current.map((item) =>
+            item.id === candidate.id
+              ? currentCandidate
+              : item
+          )
+        );
+      }
+
+      setReviewingCandidate(
+        currentCandidate
+      );
+
+      setReviewForm({
+        title:
+          currentCandidate.title,
+
+        company:
+          currentCandidate.ai_company ??
+          "",
+
+        model:
+          currentCandidate.ai_model ??
+          "",
+
+        severity:
+          currentCandidate.ai_severity ??
+          "Moderate",
+
+        category:
+          currentCandidate.ai_category ??
+          "",
+
+        occurredAt:
+          currentCandidate.published_at
+            ? currentCandidate.published_at.slice(
+                0,
+                10
+              )
+            : "",
+
+        summary:
+          currentCandidate.ai_incident_summary ??
+          currentCandidate.summary ??
+          "",
+
+        description:
+          currentCandidate.ai_incident_description ??
+          currentCandidate.summary ??
+          "",
+      });
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to open candidate review."
+      );
+    }
   }
 
   function closeReview() {
@@ -203,174 +438,163 @@ export default function CandidatesDashboard({
   ) {
     event.preventDefault();
 
-    if (!reviewingCandidate) return;
-
-    setPublishing(true);
-
-    const supabase = createClient();
-
-    const incidentId =
-      crypto.randomUUID();
-
-    const incident = {
-      id: incidentId,
-      title: reviewForm.title.trim(),
-      company: reviewForm.company.trim(),
-      model:
-        reviewForm.model.trim() || null,
-      severity: reviewForm.severity,
-      category:
-        reviewForm.category.trim() || null,
-      occurred_at:
-        reviewForm.occurredAt || null,
-      reported_at:
-        reviewingCandidate.published_at
-          ? reviewingCandidate.published_at.slice(
-              0,
-              10
-            )
-          : null,
-      updated_at:
-        new Date()
-          .toISOString()
-          .slice(0, 10),
-      summary:
-        reviewForm.summary.trim(),
-      description:
-        reviewForm.description.trim(),
-      source_name:
-        reviewingCandidate.source_name ||
-        "Unknown source",
-      source_url:
-        reviewingCandidate.article_url,
-      verification_status:
-        "Reported",
-      additional_sources: [],
-      tags: [],
-    };
-
-    const {
-      data: createdIncident,
-      error: incidentError,
-    } =
-      await supabase
-        .from("incidents")
-        .insert(incident)
-        .select()
-        .single();
-
-    if (incidentError) {
-      setPublishing(false);
-
-      alert(
-        `Unable to publish incident: ${incidentError.message}`
-      );
-
+    if (!reviewingCandidate) {
       return;
     }
 
-    const {
-      data: updatedCandidate,
-      error: candidateError,
-    } =
-      await supabase
-        .from("incident_candidates")
-        .update({
-          status: "accepted",
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq(
-          "id",
-          reviewingCandidate.id
-        )
-        .select()
-        .single();
+    setPublishing(true);
 
-    if (candidateError) {
+    try {
+      const response =
+        await fetch(
+          `/api/admin/candidates/${reviewingCandidate.id}/publish`,
+          {
+            method: "POST",
+
+            headers: {
+              "Content-Type":
+                "application/json",
+            },
+
+            body: JSON.stringify({
+              title:
+                reviewForm.title.trim(),
+
+              company:
+                reviewForm.company.trim(),
+
+              model:
+                reviewForm.model.trim() ||
+                null,
+
+              severity:
+                reviewForm.severity,
+
+              category:
+                reviewForm.category.trim() ||
+                null,
+
+              occurredAt:
+                reviewForm.occurredAt ||
+                null,
+
+              summary:
+                reviewForm.summary.trim(),
+
+              description:
+                reviewForm.description.trim(),
+            }),
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Unable to publish incident."
+        );
+      }
+
       /*
-       * The incident was created successfully,
-       * but the candidate status failed to update.
+       * The server has now:
        *
-       * We don't delete the incident automatically
-       * because we don't want to accidentally lose
-       * a legitimate published incident.
+       * 1. Verified the admin
+       * 2. Locked the candidate
+       * 3. Created the incident
+       * 4. Marked the candidate accepted
        */
-      setPublishing(false);
 
-      alert(
-        `Incident published, but the candidate status could not be updated: ${candidateError.message}`
-      );
+      const updatedCandidate = {
+        ...reviewingCandidate,
+
+        status:
+          "accepted" as const,
+
+        updated_at:
+          new Date().toISOString(),
+      };
 
       setCandidates((current) =>
         current.map((candidate) =>
           candidate.id ===
           reviewingCandidate.id
-            ? {
-                ...candidate,
-                status: "accepted",
-              }
+            ? updatedCandidate
             : candidate
         )
       );
 
+      setPublishing(false);
+
       setReviewingCandidate(null);
 
-      return;
+      alert(
+        `Incident "${result.incident.title}" published successfully.`
+      );
+    } catch (error) {
+      setPublishing(false);
+
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to publish incident."
+      );
     }
-
-    setCandidates((current) =>
-      current.map((candidate) =>
-        candidate.id ===
-        reviewingCandidate.id
-          ? updatedCandidate
-          : candidate
-      )
-    );
-
-    setPublishing(false);
-    setReviewingCandidate(null);
-
-    alert(
-      `Incident "${createdIncident.title}" published successfully.`
-    );
   }
 
   async function rejectCandidate(
     candidate: Candidate
   ) {
-    const confirmed = window.confirm(
-      "Reject this candidate?"
-    );
+    const confirmed =
+      window.confirm(
+        "Reject this candidate?"
+      );
 
-    if (!confirmed) return;
-
-    const supabase = createClient();
-
-    const { data, error } =
-      await supabase
-        .from("incident_candidates")
-        .update({
-          status: "rejected",
-          updated_at:
-            new Date().toISOString(),
-        })
-        .eq("id", candidate.id)
-        .select()
-        .single();
-
-    if (error) {
-      alert(error.message);
+    if (!confirmed) {
       return;
     }
 
-    setCandidates((current) =>
-      current.map((item) =>
-        item.id === candidate.id
-          ? data
-          : item
-      )
-    );
+    try {
+      const response =
+        await fetch(
+          `/api/admin/candidates/${candidate.id}/reject`,
+          {
+            method: "POST",
+          }
+        );
+
+      const result =
+        await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Unable to reject candidate."
+        );
+      }
+
+      setCandidates((current) =>
+        current.map((item) =>
+          item.id === candidate.id
+            ? result.candidate
+            : item
+        )
+      );
+
+      if (
+        reviewingCandidate?.id ===
+        candidate.id
+      ) {
+        setReviewingCandidate(null);
+      }
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to reject candidate."
+      );
+    }
   }
 
   async function deleteCandidate(
@@ -384,25 +608,44 @@ export default function CandidatesDashboard({
       return;
     }
 
-    const supabase = createClient();
+    try {
+      const response =
+        await fetch(
+          `/api/admin/candidates/${id}/delete`,
+          {
+            method: "DELETE",
+          }
+        );
 
-    const { error } =
-      await supabase
-        .from("incident_candidates")
-        .delete()
-        .eq("id", id);
+      const result =
+        await response.json();
 
-    if (error) {
-      alert(error.message);
-      return;
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Unable to delete candidate."
+        );
+      }
+
+      setCandidates((current) =>
+        current.filter(
+          (candidate) =>
+            candidate.id !== id
+        )
+      );
+
+      if (
+        reviewingCandidate?.id === id
+      ) {
+        setReviewingCandidate(null);
+      }
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete candidate."
+      );
     }
-
-    setCandidates((current) =>
-      current.filter(
-        (candidate) =>
-          candidate.id !== id
-      )
-    );
   }
 
   return (
@@ -473,6 +716,7 @@ export default function CandidatesDashboard({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
 
           <div>
+
             <h2 className="text-2xl font-bold text-slate-950">
               Incident candidates
             </h2>
@@ -481,6 +725,7 @@ export default function CandidatesDashboard({
               Articles and reports discovered by Frontier
               that may represent an AI incident.
             </p>
+
           </div>
 
           <button
@@ -646,6 +891,43 @@ export default function CandidatesDashboard({
                             </span>
                           )}
 
+                          {/* AI status */}
+
+                          {candidate.ai_review_status ===
+                            "completed" && (
+                            <>
+                              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                                AI{" "}
+                                {
+                                  candidate.ai_confidence ??
+                                  0
+                                }
+                                %
+                              </span>
+
+                              {candidate.ai_recommendation ===
+                                "publish" && (
+                                <span className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700">
+                                  AI: Strong
+                                </span>
+                              )}
+
+                              {candidate.ai_recommendation ===
+                                "review" && (
+                                <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2.5 py-1 text-xs font-semibold text-yellow-700">
+                                  AI: Review
+                                </span>
+                              )}
+
+                              {candidate.ai_recommendation ===
+                                "reject" && (
+                                <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                                  AI: Reject
+                                </span>
+                              )}
+                            </>
+                          )}
+
                         </div>
 
                         <h3 className="mt-3 text-lg font-bold text-slate-950">
@@ -717,6 +999,8 @@ export default function CandidatesDashboard({
 
                       </div>
 
+                      {/* Actions */}
+
                       <div className="flex shrink-0 flex-col gap-2 lg:w-36">
 
                         <a
@@ -734,16 +1018,40 @@ export default function CandidatesDashboard({
                           "pending" ||
                           candidate.status ===
                             "reviewing") && (
-                          <button
-                            onClick={() =>
-                              openReview(
-                                candidate
-                              )
-                            }
-                            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
-                          >
-                            Review
-                          </button>
+                          <div className="flex flex-col gap-2">
+
+                            <button
+                              onClick={() =>
+                                runAIReview(
+                                  candidate
+                                )
+                              }
+                              disabled={
+                                aiReviewing
+                              }
+                              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                              {candidate.ai_review_status ===
+                              "completed"
+                                ? "Re-run AI Review"
+                                : candidate.ai_review_status ===
+                                  "reviewing"
+                                ? "AI Reviewing..."
+                                : "AI Review"}
+                            </button>
+
+                            <button
+                              onClick={() =>
+                                openReview(
+                                  candidate
+                                )
+                              }
+                              className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                            >
+                              Manual Review
+                            </button>
+
+                          </div>
                         )}
 
                         {candidate.status ===
@@ -796,6 +1104,7 @@ export default function CandidatesDashboard({
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
 
               <div>
+
                 <div className="text-xs font-bold uppercase tracking-wider text-blue-600">
                   Candidate review
                 </div>
@@ -803,6 +1112,7 @@ export default function CandidatesDashboard({
                 <h2 className="mt-1 text-xl font-bold text-slate-950">
                   Review incident
                 </h2>
+
               </div>
 
               <button
@@ -818,6 +1128,124 @@ export default function CandidatesDashboard({
               onSubmit={publishIncident}
               className="space-y-5 p-6"
             >
+
+              {/* AI Assessment */}
+
+              {reviewingCandidate.ai_review_status ===
+                "completed" && (
+                <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
+
+                  <div className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">
+                    Automated AI assessment
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+
+                    <div className="text-lg font-bold text-slate-950">
+                      {reviewingCandidate.ai_recommendation ===
+                      "publish"
+                        ? "Strong candidate"
+                        : reviewingCandidate.ai_recommendation ===
+                          "review"
+                        ? "Needs editorial review"
+                        : "Likely not an incident"}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                        Confidence:{" "}
+                        {
+                          reviewingCandidate.ai_confidence ??
+                          0
+                        }
+                        %
+                      </span>
+
+                      <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
+                        Evidence:{" "}
+                        {
+                          reviewingCandidate.ai_evidence_quality ??
+                          0
+                        }
+                        %
+                      </span>
+
+                    </div>
+
+                  </div>
+
+                  <div className="mt-5 grid gap-4 md:grid-cols-2">
+
+                    <div>
+
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Intended behavior
+                      </div>
+
+                      <p className="mt-1 text-sm leading-6 text-slate-700">
+                        {reviewingCandidate.ai_intended_behavior ||
+                          "Not established from the available evidence."}
+                      </p>
+
+                    </div>
+
+                    <div>
+
+                      <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                        Observed behavior
+                      </div>
+
+                      <p className="mt-1 text-sm leading-6 text-slate-700">
+                        {reviewingCandidate.ai_observed_behavior ||
+                          "Not established from the available evidence."}
+                      </p>
+
+                    </div>
+
+                  </div>
+
+                  <div className="mt-4">
+
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Why it may qualify
+                    </div>
+
+                    <p className="mt-1 text-sm leading-6 text-slate-700">
+                      {reviewingCandidate.ai_scope_violation ||
+                        "The AI reviewer could not establish a clear scope violation."}
+                    </p>
+
+                  </div>
+
+                  <div className="mt-4">
+
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      Evidence assessment
+                    </div>
+
+                    <p className="mt-1 text-sm leading-6 text-slate-700">
+                      {reviewingCandidate.ai_evidence_summary ||
+                        "No evidence assessment available."}
+                    </p>
+
+                  </div>
+
+                  <div className="mt-4">
+
+                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                      AI reasoning
+                    </div>
+
+                    <p className="mt-1 text-sm leading-6 text-slate-700">
+                      {reviewingCandidate.ai_reasoning ||
+                        "No reasoning available."}
+                    </p>
+
+                  </div>
+
+                </div>
+              )}
 
               {/* Source */}
 
@@ -860,7 +1288,9 @@ export default function CandidatesDashboard({
               >
                 <input
                   required
-                  value={reviewForm.title}
+                  value={
+                    reviewForm.title
+                  }
                   onChange={(event) =>
                     updateForm(
                       "title",
@@ -875,10 +1305,15 @@ export default function CandidatesDashboard({
 
               <div className="grid gap-5 sm:grid-cols-2">
 
-                <Field label="Company / organization" required>
+                <Field
+                  label="Company / organization"
+                  required
+                >
                   <input
                     required
-                    value={reviewForm.company}
+                    value={
+                      reviewForm.company
+                    }
                     onChange={(event) =>
                       updateForm(
                         "company",
@@ -891,8 +1326,11 @@ export default function CandidatesDashboard({
                 </Field>
 
                 <Field label="Model">
+
                   <input
-                    value={reviewForm.model}
+                    value={
+                      reviewForm.model
+                    }
                     onChange={(event) =>
                       updateForm(
                         "model",
@@ -902,6 +1340,7 @@ export default function CandidatesDashboard({
                     placeholder="GPT-5"
                     className="input"
                   />
+
                 </Field>
 
               </div>
@@ -910,9 +1349,14 @@ export default function CandidatesDashboard({
 
               <div className="grid gap-5 sm:grid-cols-2">
 
-                <Field label="Severity" required>
+                <Field
+                  label="Severity"
+                  required
+                >
                   <select
-                    value={reviewForm.severity}
+                    value={
+                      reviewForm.severity
+                    }
                     onChange={(event) =>
                       updateForm(
                         "severity",
@@ -924,12 +1368,15 @@ export default function CandidatesDashboard({
                     <option>
                       Critical
                     </option>
+
                     <option>
                       High
                     </option>
+
                     <option>
                       Moderate
                     </option>
+
                     <option>
                       Low
                     </option>
@@ -937,18 +1384,24 @@ export default function CandidatesDashboard({
                 </Field>
 
                 <Field label="Category">
+
                   <div>
+
                     <label className="text-sm font-semibold text-slate-700">
                       Category
                     </label>
 
                     <input
                       list="incident-categories"
-                      value={reviewForm.category}
+                      value={
+                        reviewForm.category
+                      }
                       onChange={(event) =>
                         setReviewForm({
                           ...reviewForm,
-                          category: event.target.value,
+                          category:
+                            event.target
+                              .value,
                         })
                       }
                       placeholder="Select or enter a category..."
@@ -956,18 +1409,22 @@ export default function CandidatesDashboard({
                     />
 
                     <datalist id="incident-categories">
-                      {INCIDENT_CATEGORIES.map((category) => (
-                        <option
-                          key={category}
-                          value={category}
-                        />
-                      ))}
+                      {INCIDENT_CATEGORIES.map(
+                        (category) => (
+                          <option
+                            key={category}
+                            value={category}
+                          />
+                        )
+                      )}
                     </datalist>
 
                     <p className="mt-2 text-xs text-slate-400">
                       Choose a suggested category or enter a new one.
                     </p>
+
                   </div>
+
                 </Field>
 
               </div>
@@ -975,6 +1432,7 @@ export default function CandidatesDashboard({
               {/* Occurred */}
 
               <Field label="Occurred date">
+
                 <input
                   type="date"
                   value={
@@ -988,6 +1446,7 @@ export default function CandidatesDashboard({
                   }
                   className="input"
                 />
+
               </Field>
 
               {/* Summary */}
@@ -996,10 +1455,13 @@ export default function CandidatesDashboard({
                 label="Summary"
                 required
               >
+
                 <textarea
                   required
                   rows={4}
-                  value={reviewForm.summary}
+                  value={
+                    reviewForm.summary
+                  }
                   onChange={(event) =>
                     updateForm(
                       "summary",
@@ -1009,6 +1471,7 @@ export default function CandidatesDashboard({
                   className="input resize-none"
                   placeholder="Briefly summarize the incident."
                 />
+
               </Field>
 
               {/* Description */}
@@ -1017,6 +1480,7 @@ export default function CandidatesDashboard({
                 label="Description"
                 required
               >
+
                 <textarea
                   required
                   rows={7}
@@ -1032,6 +1496,7 @@ export default function CandidatesDashboard({
                   className="input resize-none"
                   placeholder="Describe what happened, what the AI system did, and why it was outside the intended behavior."
                 />
+
               </Field>
 
               {/* Actions */}
@@ -1052,7 +1517,9 @@ export default function CandidatesDashboard({
 
                   <button
                     type="button"
-                    disabled={publishing}
+                    disabled={
+                      publishing
+                    }
                     onClick={() => {
                       if (
                         reviewingCandidate
@@ -1071,7 +1538,9 @@ export default function CandidatesDashboard({
 
                   <button
                     type="submit"
-                    disabled={publishing}
+                    disabled={
+                      publishing
+                    }
                     className="rounded-xl bg-green-600 px-5 py-3 text-sm font-semibold text-white hover:bg-green-500 disabled:opacity-50"
                   >
                     {publishing
@@ -1108,14 +1577,22 @@ function CandidateStat({
     | "green";
 }) {
   const colors = {
-    slate: "text-slate-950",
-    blue: "text-blue-600",
-    yellow: "text-yellow-600",
-    green: "text-green-600",
+    slate:
+      "text-slate-950",
+
+    blue:
+      "text-blue-600",
+
+    yellow:
+      "text-yellow-600",
+
+    green:
+      "text-green-600",
   };
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
+
       <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
         {label}
       </p>
@@ -1125,6 +1602,7 @@ function CandidateStat({
       >
         {value}
       </p>
+
     </div>
   );
 }
@@ -1140,18 +1618,23 @@ function Field({
 }) {
   return (
     <div>
+
       <label className="text-sm font-semibold text-slate-700">
+
         {label}
+
         {required && (
           <span className="ml-1 text-red-500">
             *
           </span>
         )}
+
       </label>
 
       <div className="mt-2">
         {children}
       </div>
+
     </div>
   );
 }
