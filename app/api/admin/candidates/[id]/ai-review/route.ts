@@ -17,18 +17,21 @@ export const dynamic =
   "force-dynamic";
 
 export async function POST(
-  request: Request,
+  _request: Request,
   context: RouteContext
 ) {
-  try {
-    const supabase =
-      await createClient();
+  const candidateId =
+    (await context.params).id;
 
+  try {
     /*
      * ----------------------------------------------------------
      * 1. Authenticate the admin
      * ----------------------------------------------------------
      */
+
+    const supabase =
+      await createClient();
 
     const {
       data: { user },
@@ -88,12 +91,9 @@ export async function POST(
 
     /*
      * ----------------------------------------------------------
-     * 2. Get candidate
+     * 2. Load candidate using the service-role client
      * ----------------------------------------------------------
      */
-
-    const candidateId =
-      (await context.params).id;
 
     const adminSupabase =
       createAdminClient();
@@ -139,13 +139,13 @@ export async function POST(
 
     /*
      * ----------------------------------------------------------
-     * 3. Prevent unnecessary duplicate reviews
+     * 3. Do not allow simultaneous AI reviews
      * ----------------------------------------------------------
      */
 
     if (
       candidate.ai_review_status ===
-        "reviewing"
+      "reviewing"
     ) {
       return NextResponse.json(
         {
@@ -160,53 +160,110 @@ export async function POST(
 
     /*
      * ----------------------------------------------------------
-     * 4. Mark AI review as in progress
+     * 4. Mark the candidate as under review
      * ----------------------------------------------------------
+     *
+     * This endpoint can now safely be called by:
+     *
+     * - individual AI review
+     * - batch AI review
+     *
+     * Pending candidates also move into the normal
+     * editorial "reviewing" state.
      */
 
-    await adminSupabase
-      .from("incident_candidates")
-      .update({
-        ai_review_status:
-          "reviewing",
-        updated_at:
-          new Date().toISOString(),
-      })
-      .eq("id", candidateId);
+    const now =
+      new Date().toISOString();
+
+    const startUpdate: {
+      ai_review_status: string;
+      updated_at: string;
+      status?: string;
+    } = {
+      ai_review_status:
+        "reviewing",
+
+      updated_at: now,
+    };
+
+    if (
+      candidate.status ===
+      "pending"
+    ) {
+      startUpdate.status =
+        "reviewing";
+    }
+
+    const {
+      error: startError,
+    } =
+      await adminSupabase
+        .from("incident_candidates")
+        .update(startUpdate)
+        .eq("id", candidateId);
+
+    if (startError) {
+      console.error(
+        "Failed to start AI review:",
+        startError
+      );
+
+      return NextResponse.json(
+        {
+          error:
+            "Unable to start AI review.",
+        },
+        {
+          status: 500,
+        }
+      );
+    }
 
     /*
      * ----------------------------------------------------------
-     * 5. Ask Gemini to analyze the article
+     * 5. Ask Gemini to review the article
      * ----------------------------------------------------------
+     *
+     * The article text fetched during discovery is preferred.
+     * reviewCandidate() will attempt another fetch if it is
+     * unavailable.
      */
 
     const result =
-        await reviewCandidate({
-            title: candidate.title,
-            sourceName:
-            candidate.source_name,
-            sourceUrl:
-            candidate.source_url,
-            articleUrl:
-            candidate.article_url,
-            summary:
-            candidate.summary,
-            publishedAt:
-            candidate.published_at,
+      await reviewCandidate({
+        title:
+          candidate.title,
 
-            // Use the article text that was already
-            // fetched during discovery.
-            articleText:
-            candidate.article_text ?? null,
-        });
+        sourceName:
+          candidate.source_name,
+
+        sourceUrl:
+          candidate.source_url,
+
+        articleUrl:
+          candidate.article_url,
+
+        summary:
+          candidate.summary,
+
+        publishedAt:
+          candidate.published_at,
+
+        articleText:
+          candidate.article_text ??
+          null,
+      });
 
     /*
      * ----------------------------------------------------------
-     * 6. Save structured AI assessment
+     * 6. Save the structured AI assessment
      * ----------------------------------------------------------
      */
 
-    const { data: updatedCandidate, error: updateError } =
+    const {
+      data: updatedCandidate,
+      error: updateError,
+    } =
       await adminSupabase
         .from("incident_candidates")
         .update({
@@ -277,6 +334,22 @@ export async function POST(
         updateError
       );
 
+      /*
+       * The Gemini call succeeded, but the
+       * database write failed.
+       */
+
+      await adminSupabase
+        .from("incident_candidates")
+        .update({
+          ai_review_status:
+            "failed",
+
+          updated_at:
+            new Date().toISOString(),
+        })
+        .eq("id", candidateId);
+
       return NextResponse.json(
         {
           error:
@@ -288,10 +361,20 @@ export async function POST(
       );
     }
 
+    /*
+     * ----------------------------------------------------------
+     * 7. Return the updated candidate
+     * ----------------------------------------------------------
+     */
+
     return NextResponse.json({
       success: true,
-      candidate: updatedCandidate,
-      review: result,
+
+      candidate:
+        updatedCandidate,
+
+      review:
+        result,
     });
   } catch (error) {
     console.error(
@@ -300,12 +383,12 @@ export async function POST(
     );
 
     /*
-     * Try to mark the review as failed.
+     * ----------------------------------------------------------
+     * 8. Mark failed reviews
+     * ----------------------------------------------------------
      */
-    try {
-      const candidateId =
-        (await context.params).id;
 
+    try {
       const adminSupabase =
         createAdminClient();
 
@@ -314,6 +397,7 @@ export async function POST(
         .update({
           ai_review_status:
             "failed",
+
           updated_at:
             new Date().toISOString(),
         })
