@@ -3,12 +3,14 @@ import Parser from "rss-parser";
 type FeedItem = {
   title?: string;
   link?: string;
+  guid?: string;
   pubDate?: string;
   contentSnippet?: string;
   content?: string;
   creator?: string;
   source?: {
     name?: string;
+    url?: string;
   };
 };
 
@@ -51,16 +53,34 @@ export type DiscoveredCandidate = {
     | "failed";
 };
 
-const parser = new Parser();
+const parser =
+  new Parser<FeedItem>();
 
 const USER_AGENT =
   "Mozilla/5.0 (compatible; Frontier Incident Research Bot/1.0; +https://frontier-eight.vercel.app/)";
 
-const MAX_ARTICLE_LENGTH = 50000;
-const MIN_ARTICLE_LENGTH = 500;
+const MAX_ARTICLE_LENGTH =
+  50000;
+
+const MIN_ARTICLE_LENGTH =
+  500;
 
 const GOOGLE_NEWS_BOILERPLATE =
   "Comprehensive up-to-date news coverage, aggregated from sources all over the world by Google News.";
+
+const GOOGLE_NEWS_HOSTS = [
+  "news.google.com",
+  "www.news.google.com",
+];
+
+const GOOGLE_INFRASTRUCTURE_HOSTS = [
+  "lh3.googleusercontent.com",
+  "lh4.googleusercontent.com",
+  "lh5.googleusercontent.com",
+  "lh6.googleusercontent.com",
+  "googleusercontent.com",
+  "gstatic.com",
+];
 
 const RSS_FEEDS = [
   "https://news.google.com/rss/search?q=%22rogue+AI%22&hl=en-US&gl=US&ceid=US:en",
@@ -76,7 +96,10 @@ const RSS_FEEDS = [
   "https://news.google.com/rss/search?q=%22AI+agent%22+%22safety+incident%22&hl=en-US&gl=US&ceid=US:en",
 ];
 
-const KEYWORDS: Record<string, number> = {
+const KEYWORDS: Record<
+  string,
+  number
+> = {
   "rogue AI": 30,
   "went rogue": 30,
   "AI agent": 10,
@@ -123,7 +146,15 @@ const TRUSTED_SOURCES = [
   "metr.org",
 ];
 
-function cleanText(text: string): string {
+/*
+ * ----------------------------------------------------------
+ * General text helpers
+ * ----------------------------------------------------------
+ */
+
+function cleanText(
+  text: string
+): string {
   return text
     .replace(/\r/g, "")
     .replace(/\u00a0/g, " ")
@@ -137,17 +168,25 @@ function truncateText(
   text: string,
   maxCharacters: number
 ): string {
-  if (text.length <= maxCharacters) {
+  if (
+    text.length <=
+    maxCharacters
+  ) {
     return text;
   }
 
   return (
-    text.slice(0, maxCharacters) +
+    text.slice(
+      0,
+      maxCharacters
+    ) +
     "\n\n[ARTICLE TEXT TRUNCATED]"
   );
 }
 
-function decodeHtmlEntities(text: string): string {
+function decodeHtmlEntities(
+  text: string
+): string {
   return text
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
@@ -158,20 +197,15 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&gt;/gi, ">");
 }
 
-function isGoogleNewsUrl(url: string): boolean {
-  try {
-    const parsed = new URL(url);
+/*
+ * ----------------------------------------------------------
+ * URL helpers
+ * ----------------------------------------------------------
+ */
 
-    return (
-      parsed.hostname === "news.google.com" ||
-      parsed.hostname.endsWith(".news.google.com")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function getDomain(url: string): string {
+function getDomain(
+  url: string
+): string {
   try {
     return new URL(url)
       .hostname
@@ -182,15 +216,106 @@ function getDomain(url: string): string {
   }
 }
 
-function isTrustedSource(url: string): boolean {
-  const domain = getDomain(url);
+function isGoogleNewsUrl(
+  url: string
+): boolean {
+  try {
+    const hostname =
+      new URL(url)
+        .hostname
+        .toLowerCase();
+
+    return (
+      hostname ===
+        "news.google.com" ||
+      hostname.endsWith(
+        ".news.google.com"
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isGoogleInfrastructureUrl(
+  url: string
+): boolean {
+  const hostname =
+    getDomain(url);
+
+  if (!hostname) {
+    return false;
+  }
+
+  return GOOGLE_INFRASTRUCTURE_HOSTS.some(
+    (host) =>
+      hostname === host ||
+      hostname.endsWith(
+        `.${host}`
+      )
+  );
+}
+
+function isValidPublisherUrl(
+  url: string | null
+): boolean {
+  if (!url) {
+    return false;
+  }
+
+  try {
+    const parsed =
+      new URL(url);
+
+    if (
+      parsed.protocol !==
+      "http:" &&
+      parsed.protocol !==
+      "https:"
+    ) {
+      return false;
+    }
+
+    if (
+      isGoogleNewsUrl(url)
+    ) {
+      return false;
+    }
+
+    if (
+      isGoogleInfrastructureUrl(
+        url
+      )
+    ) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedSource(
+  url: string
+): boolean {
+  const domain =
+    getDomain(url);
 
   return TRUSTED_SOURCES.some(
     (trusted) =>
       domain === trusted ||
-      domain.endsWith(`.${trusted}`)
+      domain.endsWith(
+        `.${trusted}`
+      )
   );
 }
+
+/*
+ * ----------------------------------------------------------
+ * Relevance scoring
+ * ----------------------------------------------------------
+ */
 
 function calculateRelevance(
   title: string,
@@ -201,11 +326,17 @@ function calculateRelevance(
 
   let score = 0;
 
-  const matchedKeywords: string[] = [];
+  const matchedKeywords: string[] =
+    [];
 
-  for (const [keyword, weight] of Object.entries(
-    KEYWORDS
-  )) {
+  for (
+    const [
+      keyword,
+      weight,
+    ] of Object.entries(
+      KEYWORDS
+    )
+  ) {
     if (
       text.includes(
         keyword.toLowerCase()
@@ -220,15 +351,21 @@ function calculateRelevance(
   }
 
   return {
-    score: Math.min(score, 100),
+    score: Math.min(
+      score,
+      100
+    ),
+
     matchedKeywords,
   };
 }
 
-/**
- * Determines whether extracted text is actually
- * useful article content.
+/*
+ * ----------------------------------------------------------
+ * Article text validation
+ * ----------------------------------------------------------
  */
+
 function isUsableArticleText(
   text: string | null
 ): boolean {
@@ -246,10 +383,6 @@ function isUsableArticleText(
     return false;
   }
 
-  /*
-   * Never accept the standard Google News
-   * boilerplate as article content.
-   */
   if (
     cleaned
       .toLowerCase()
@@ -260,10 +393,6 @@ function isUsableArticleText(
     return false;
   }
 
-  /*
-   * Prevent obviously empty / navigation-like
-   * pages from being treated as articles.
-   */
   const lower =
     cleaned.toLowerCase();
 
@@ -293,15 +422,20 @@ function isUsableArticleText(
         lower.includes(signal)
     ).length;
 
-  return signalCount >= 2;
+  return (
+    signalCount >= 2
+  );
 }
 
-/**
- * Fetch a URL and return HTML plus the final URL
- * after redirects.
+/*
+ * ----------------------------------------------------------
+ * Basic HTTP fetch
+ * ----------------------------------------------------------
  */
+
 async function fetchHtml(
-  url: string
+  url: string,
+  timeoutMs = 15000
 ): Promise<{
   html: string;
   finalUrl: string;
@@ -310,6 +444,7 @@ async function fetchHtml(
     const response =
       await fetch(url, {
         method: "GET",
+
         redirect: "follow",
 
         headers: {
@@ -325,13 +460,13 @@ async function fetchHtml(
 
         signal:
           AbortSignal.timeout(
-            15000
+            timeoutMs
           ),
       });
 
     if (!response.ok) {
       console.warn(
-        `Article fetch returned ${response.status}: ${url}`
+        `HTTP ${response.status} while fetching ${url}`
       );
 
       return null;
@@ -358,6 +493,7 @@ async function fetchHtml(
 
     return {
       html,
+
       finalUrl:
         response.url ||
         url,
@@ -372,114 +508,733 @@ async function fetchHtml(
   }
 }
 
-/**
- * Convert HTML into readable text.
+/*
+ * ----------------------------------------------------------
+ * Google News URL resolution
+ * ----------------------------------------------------------
+ *
+ * Google News RSS article links are encoded:
+ *
+ * https://news.google.com/rss/articles/CBMi...
+ *
+ * A normal HTTP redirect is NOT reliable for these URLs.
+ *
+ * We therefore:
+ *
+ * 1. Extract the Google article ID.
+ * 2. Fetch Google's article page.
+ * 3. Read data-n-a-id, data-n-a-sg and data-n-a-ts.
+ * 4. Call Google's Fbv4je batchexecute RPC.
+ * 5. Extract the real publisher URL.
+ *
+ * This follows the same general mechanism used by
+ * current Google News URL decoder implementations.
  */
+
+function extractGoogleNewsArticleId(
+  url: string
+): string | null {
+  try {
+    const parsed =
+      new URL(url);
+
+    const segments =
+      parsed.pathname
+        .split("/")
+        .filter(Boolean);
+
+    const articleIndex =
+      segments.findIndex(
+        (segment) =>
+          segment ===
+            "articles" ||
+          segment ===
+            "read"
+      );
+
+    if (
+      articleIndex >= 0 &&
+      segments[
+        articleIndex + 1
+      ]
+    ) {
+      return decodeURIComponent(
+        segments[
+          articleIndex + 1
+        ]
+      );
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function extractGoogleDecodeParams(
+  html: string,
+  articleId: string
+): {
+  id: string;
+  signature: string;
+  timestamp: string;
+} | null {
+  /*
+   * Google normally exposes these attributes on:
+   *
+   * <c-wiz>
+   *   <div
+   *     data-n-a-id="..."
+   *     data-n-a-sg="..."
+   *     data-n-a-ts="..."
+   *   >
+   */
+
+  const escapedId =
+    articleId.replace(
+      /[.*+?^${}()|[\]\\]/g,
+      "\\$&"
+    );
+
+  const patterns = [
+    new RegExp(
+      `<[^>]*data-n-a-id=["']${escapedId}["'][^>]*data-n-a-sg=["']([^"']+)["'][^>]*data-n-a-ts=["']([^"']+)["'][^>]*>`,
+      "i"
+    ),
+
+    new RegExp(
+      `<[^>]*data-n-a-id=["']${escapedId}["'][^>]*data-n-a-ts=["']([^"']+)["'][^>]*data-n-a-sg=["']([^"']+)["'][^>]*>`,
+      "i"
+    ),
+  ];
+
+  for (
+    const pattern of patterns
+  ) {
+    const match =
+      html.match(pattern);
+
+    if (
+      match?.[1] &&
+      match?.[2]
+    ) {
+      /*
+       * The second pattern reverses signature and
+       * timestamp, so determine which one is numeric.
+       */
+      const first =
+        match[1];
+
+      const second =
+        match[2];
+
+      if (
+        /^\d+$/.test(
+          first
+        )
+      ) {
+        return {
+          id: articleId,
+          timestamp: first,
+          signature: second,
+        };
+      }
+
+      return {
+        id: articleId,
+        signature: first,
+        timestamp: second,
+      };
+    }
+  }
+
+  /*
+   * More flexible fallback. This handles cases where
+   * attributes are not in the exact expected order.
+   */
+  const divMatches =
+    html.matchAll(
+      /<div\b[^>]*data-n-a-id=["']([^"']+)["'][^>]*>/gi
+    );
+
+  for (
+    const match of divMatches
+  ) {
+    const tag =
+      match[0];
+
+    if (
+      match[1] !==
+      articleId
+    ) {
+      continue;
+    }
+
+    const signature =
+      tag.match(
+        /data-n-a-sg=["']([^"']+)["']/i
+      )?.[1];
+
+    const timestamp =
+      tag.match(
+        /data-n-a-ts=["']([^"']+)["']/i
+      )?.[1];
+
+    if (
+      signature &&
+      timestamp
+    ) {
+      return {
+        id: articleId,
+        signature,
+        timestamp,
+      };
+    }
+  }
+
+  return null;
+}
+
+function extractDecodedUrlFromBatchResponse(
+  responseText: string
+): string | null {
+  try {
+    /*
+     * Google wraps the RPC response in an anti-XSSI
+     * prefix and one or more newline-delimited payloads.
+     */
+    const sections =
+      responseText.split(
+        "\n\n"
+      );
+
+    for (
+      const section of sections
+    ) {
+      if (
+        !section ||
+        !section.includes(
+          "Fbv4je"
+        )
+      ) {
+        continue;
+      }
+
+      /*
+       * The first JSON object in the section normally
+       * contains the RPC result.
+       */
+      let outer: unknown;
+
+      try {
+        outer =
+          JSON.parse(section);
+      } catch {
+        continue;
+      }
+
+      if (
+        !Array.isArray(outer)
+      ) {
+        continue;
+      }
+
+      for (
+        const row of outer
+      ) {
+        if (
+          !Array.isArray(row)
+        ) {
+          continue;
+        }
+
+        /*
+         * Common shape:
+         *
+         * [
+         *   ...,
+         *   ...,
+         *   "JSON STRING"
+         * ]
+         */
+        for (
+          const value of row
+        ) {
+          if (
+            typeof value !==
+            "string"
+          ) {
+            continue;
+          }
+
+          if (
+            !value.includes(
+              "http"
+            )
+          ) {
+            continue;
+          }
+
+          try {
+            const parsed =
+              JSON.parse(
+                value
+              );
+
+            const candidate =
+              findFirstExternalUrl(
+                parsed
+              );
+
+            if (
+              isValidPublisherUrl(
+                candidate
+              )
+            ) {
+              return candidate;
+            }
+          } catch {
+            /*
+             * The string may not itself be JSON.
+             * Try direct URL extraction below.
+             */
+          }
+
+          const urls =
+            value.match(
+              /https?:\/\/[^\s"'\\]+/g
+            ) || [];
+
+          for (
+            const candidate of urls
+          ) {
+            const cleaned =
+              candidate.replace(
+                /[\\"]+$/g,
+                ""
+              );
+
+            if (
+              isValidPublisherUrl(
+                cleaned
+              )
+            ) {
+              return cleaned;
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    /*
+     * Fall through to regex-based extraction.
+     */
+  }
+
+  /*
+   * Last-resort extraction from the entire response.
+   */
+  const urls =
+    responseText.match(
+      /https?:\/\/[^\s"'\\]+/g
+    ) || [];
+
+  for (
+    const candidate of urls
+  ) {
+    const cleaned =
+      candidate.replace(
+        /[\\"]+$/g,
+        ""
+      );
+
+    if (
+      isValidPublisherUrl(
+        cleaned
+      )
+    ) {
+      return cleaned;
+    }
+  }
+
+  return null;
+}
+
+function findFirstExternalUrl(
+  value: unknown
+): string | null {
+  if (
+    typeof value ===
+    "string"
+  ) {
+    if (
+      isValidPublisherUrl(
+        value
+      )
+    ) {
+      return value;
+    }
+
+    return null;
+  }
+
+  if (
+    Array.isArray(value)
+  ) {
+    for (
+      const item of value
+    ) {
+      const result =
+        findFirstExternalUrl(
+          item
+        );
+
+      if (result) {
+        return result;
+      }
+    }
+
+    return null;
+  }
+
+  if (
+    typeof value ===
+      "object" &&
+    value !== null
+  ) {
+    for (
+      const item of Object.values(
+        value
+      )
+    ) {
+      const result =
+        findFirstExternalUrl(
+          item
+        );
+
+      if (result) {
+        return result;
+      }
+    }
+  }
+
+  return null;
+}
+
+async function resolveGoogleNewsUrl(
+  googleNewsUrl: string
+): Promise<string | null> {
+  if (
+    !isGoogleNewsUrl(
+      googleNewsUrl
+    )
+  ) {
+    return isValidPublisherUrl(
+      googleNewsUrl
+    )
+      ? googleNewsUrl
+      : null;
+  }
+
+  const articleId =
+    extractGoogleNewsArticleId(
+      googleNewsUrl
+    );
+
+  if (!articleId) {
+    console.warn(
+      "Could not extract Google News article ID:",
+      googleNewsUrl
+    );
+
+    return null;
+  }
+
+  /*
+   * Google has used both /articles/ and /rss/articles/
+   * endpoints for these pages. Try the cleaner article
+   * endpoint first.
+   */
+  const googleArticleUrls = [
+    `https://news.google.com/articles/${encodeURIComponent(
+      articleId
+    )}?hl=en-US&gl=US&ceid=US:en`,
+
+    `https://news.google.com/rss/articles/${encodeURIComponent(
+      articleId
+    )}?hl=en-US&gl=US&ceid=US:en`,
+  ];
+
+  let params:
+    | {
+        id: string;
+        signature: string;
+        timestamp: string;
+      }
+    | null = null;
+
+  for (
+    const googleArticleUrl of googleArticleUrls
+  ) {
+    const response =
+      await fetchHtml(
+        googleArticleUrl,
+        15000
+      );
+
+    if (!response) {
+      continue;
+    }
+
+    params =
+      extractGoogleDecodeParams(
+        response.html,
+        articleId
+      );
+
+    if (params) {
+      break;
+    }
+  }
+
+  if (!params) {
+    console.warn(
+      "Could not obtain Google News decoding parameters:",
+      googleNewsUrl
+    );
+
+    return null;
+  }
+
+  /*
+   * Construct the Fbv4je request.
+   *
+   * This is Google's internal RPC used by current
+   * Google News URL decoders.
+   */
+  const innerRequest =
+    JSON.stringify([
+      "garturlreq",
+      [
+        [
+          "en-US",
+          "US",
+          [
+            "FINANCE_TOP_INDICES",
+            "WEB_TEST_1_0_0",
+          ],
+          null,
+          null,
+          1,
+          1,
+          "US:en",
+          null,
+          1,
+          null,
+          null,
+          null,
+          null,
+          null,
+          0,
+          1,
+        ],
+        "en-US",
+        "US",
+        1,
+        [1, 1, 1],
+        1,
+        1,
+        null,
+        0,
+        0,
+        null,
+        0,
+      ],
+      params.id,
+      Number(
+        params.timestamp
+      ),
+      params.signature,
+    ]);
+
+  const rpcPayload =
+    JSON.stringify([
+      [
+        [
+          "Fbv4je",
+          innerRequest,
+          null,
+          "generic",
+        ],
+      ],
+    ]);
+
+  try {
+    const response =
+      await fetch(
+        "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/x-www-form-urlencoded;charset=UTF-8",
+
+            "User-Agent":
+              USER_AGENT,
+
+            Accept:
+              "*/*",
+
+            "Accept-Language":
+              "en-US,en;q=0.9",
+
+            Origin:
+              "https://news.google.com",
+
+            Referer:
+              `https://news.google.com/articles/${encodeURIComponent(
+                articleId
+              )}`,
+          },
+
+          body:
+            `f.req=${encodeURIComponent(
+              rpcPayload
+            )}`,
+
+          signal:
+            AbortSignal.timeout(
+              15000
+            ),
+        }
+      );
+
+    if (!response.ok) {
+      console.warn(
+        `Google News decoder returned ${response.status}: ${googleNewsUrl}`
+      );
+
+      return null;
+    }
+
+    const responseText =
+      await response.text();
+
+    const decodedUrl =
+      extractDecodedUrlFromBatchResponse(
+        responseText
+      );
+
+    if (
+      !isValidPublisherUrl(
+        decodedUrl
+      )
+    ) {
+      console.warn(
+        "Google News decoder returned no valid publisher URL:",
+        googleNewsUrl
+      );
+
+      return null;
+    }
+
+    return decodedUrl;
+  } catch (error) {
+    console.warn(
+      "Google News URL resolution failed:",
+      error
+    );
+
+    return null;
+  }
+}
+
+/*
+ * ----------------------------------------------------------
+ * HTML article extraction
+ * ----------------------------------------------------------
+ */
+
 function htmlToText(
   html: string
 ): string {
   let text = html;
 
-  /*
-   * Remove scripts.
-   */
   text = text.replace(
     /<script\b[^>]*>[\s\S]*?<\/script>/gi,
     " "
   );
 
-  /*
-   * Remove styles.
-   */
   text = text.replace(
     /<style\b[^>]*>[\s\S]*?<\/style>/gi,
     " "
   );
 
-  /*
-   * Remove noscript.
-   */
   text = text.replace(
     /<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi,
     " "
   );
 
-  /*
-   * Remove SVG.
-   */
   text = text.replace(
     /<svg\b[^>]*>[\s\S]*?<\/svg>/gi,
     " "
   );
 
-  /*
-   * Remove navigation.
-   */
   text = text.replace(
     /<nav\b[^>]*>[\s\S]*?<\/nav>/gi,
     " "
   );
 
-  /*
-   * Remove footer.
-   */
   text = text.replace(
     /<footer\b[^>]*>[\s\S]*?<\/footer>/gi,
     " "
   );
 
-  /*
-   * Remove header.
-   */
   text = text.replace(
     /<header\b[^>]*>[\s\S]*?<\/header>/gi,
     " "
   );
 
-  /*
-   * Remove sidebars.
-   */
   text = text.replace(
     /<aside\b[^>]*>[\s\S]*?<\/aside>/gi,
     " "
   );
 
-  /*
-   * Preserve paragraph boundaries.
-   */
   text = text.replace(
     /<\/(p|article|section|div|li|h1|h2|h3|h4|h5|blockquote|br)>/gi,
     "\n"
   );
 
-  /*
-   * Remove remaining HTML tags.
-   */
   text = text.replace(
     /<[^>]+>/g,
     " "
   );
 
   text =
-    decodeHtmlEntities(text);
+    decodeHtmlEntities(
+      text
+    );
 
-  return cleanText(text);
+  return cleanText(
+    text
+  );
 }
 
-/**
- * Extract JSON-LD blocks.
- */
 function extractJsonLd(
   html: string
 ): unknown[] {
-  const results: unknown[] = [];
+  const results: unknown[] =
+    [];
 
   const matches =
     html.matchAll(
       /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
     );
 
-  for (const match of matches) {
+  for (
+    const match of matches
+  ) {
     const raw =
       match[1]?.trim();
 
@@ -493,8 +1248,7 @@ function extractJsonLd(
       );
     } catch {
       /*
-       * Invalid JSON-LD is common.
-       * Ignore it.
+       * Ignore malformed JSON-LD.
        */
     }
   }
@@ -502,9 +1256,6 @@ function extractJsonLd(
   return results;
 }
 
-/**
- * Recursively locate articleBody in JSON-LD.
- */
 function findArticleBodyInJsonLd(
   value: unknown
 ): string | null {
@@ -512,8 +1263,12 @@ function findArticleBodyInJsonLd(
     return null;
   }
 
-  if (Array.isArray(value)) {
-    for (const item of value) {
+  if (
+    Array.isArray(value)
+  ) {
+    for (
+      const item of value
+    ) {
       const result =
         findArticleBodyInJsonLd(
           item
@@ -532,7 +1287,8 @@ function findArticleBodyInJsonLd(
   }
 
   if (
-    typeof value !== "object" ||
+    typeof value !==
+      "object" ||
     value === null
   ) {
     return null;
@@ -562,10 +1318,6 @@ function findArticleBodyInJsonLd(
     }
   }
 
-  /*
-   * Some publishers put article data inside
-   * @graph.
-   */
   if (
     object["@graph"]
   ) {
@@ -586,9 +1338,6 @@ function findArticleBodyInJsonLd(
   return null;
 }
 
-/**
- * Extract the <article> element.
- */
 function extractArticleElement(
   html: string
 ): string | null {
@@ -613,9 +1362,6 @@ function extractArticleElement(
     : null;
 }
 
-/**
- * Extract paragraph content.
- */
 function extractParagraphText(
   html: string
 ): string | null {
@@ -654,9 +1400,6 @@ function extractParagraphText(
     : null;
 }
 
-/**
- * Extract metadata descriptions.
- */
 function extractMetaDescription(
   html: string
 ): string | null {
@@ -686,12 +1429,9 @@ function extractMetaDescription(
           )
         );
 
-      /*
-       * Metadata is intentionally allowed to be
-       * shorter than full article text.
-       */
       if (
-        text.length >= 100 &&
+        text.length >=
+          100 &&
         !text
           .toLowerCase()
           .includes(
@@ -706,158 +1446,14 @@ function extractMetaDescription(
   return null;
 }
 
-/**
- * Extract the publisher URL from Google News HTML.
+/*
+ * ----------------------------------------------------------
+ * Article fetching
+ * ----------------------------------------------------------
  */
-function extractPublisherUrl(
-  html: string
-): string | null {
-  const candidates: string[] =
-    [];
 
-  /*
-   * Canonical URL.
-   */
-  const canonicalMatches =
-    html.matchAll(
-      /<link[^>]+rel=["']canonical["'][^>]+href=["']([^"']+)["']/gi
-    );
-
-  for (
-    const match of canonicalMatches
-  ) {
-    if (match[1]) {
-      candidates.push(
-        decodeHtmlEntities(
-          match[1]
-        )
-      );
-    }
-  }
-
-  /*
-   * OpenGraph URL.
-   */
-  const ogMatches =
-    html.matchAll(
-      /<meta[^>]+property=["']og:url["'][^>]+content=["']([^"']+)["']/gi
-    );
-
-  for (
-    const match of ogMatches
-  ) {
-    if (match[1]) {
-      candidates.push(
-        decodeHtmlEntities(
-          match[1]
-        )
-      );
-    }
-  }
-
-  /*
-   * Look for ordinary absolute URLs embedded
-   * in Google News HTML.
-   */
-  const absoluteMatches =
-    html.matchAll(
-      /https?:\/\/[^"'<>\\\s]+/gi
-    );
-
-  for (
-    const match of absoluteMatches
-  ) {
-    if (match[0]) {
-      candidates.push(
-        match[0]
-      );
-    }
-  }
-
-  for (
-    const candidate of candidates
-  ) {
-    try {
-      const url =
-        new URL(
-          candidate,
-          "https://news.google.com"
-        );
-
-      const hostname =
-        url.hostname.toLowerCase();
-
-      if (
-        hostname !==
-          "news.google.com" &&
-        !hostname.endsWith(
-          ".news.google.com"
-        )
-      ) {
-        return url.href;
-      }
-    } catch {
-      /*
-       * Ignore malformed URLs.
-       */
-    }
-  }
-
-  return null;
-}
-
-/**
- * Resolve a Google News article URL.
- *
- * We attempt:
- *
- * 1. Normal HTTP redirect
- * 2. Canonical URL
- * 3. OpenGraph URL
- * 4. Embedded publisher URL
- */
-async function resolveGoogleNewsUrl(
-  googleNewsUrl: string
-): Promise<string | null> {
-  const response =
-    await fetchHtml(
-      googleNewsUrl
-    );
-
-  if (!response) {
-    return null;
-  }
-
-  /*
-   * fetch() may have followed the redirect.
-   */
-  if (
-    response.finalUrl &&
-    !isGoogleNewsUrl(
-      response.finalUrl
-    )
-  ) {
-    return response.finalUrl;
-  }
-
-  /*
-   * Otherwise inspect the HTML.
-   */
-  return extractPublisherUrl(
-    response.html
-  );
-}
-
-/**
- * Fetch article content.
- *
- * This function is intentionally separate from
- * discoverCandidates() so discovery can remain
- * responsible for candidate selection while this
- * function handles article retrieval.
- */
 async function fetchArticleContent(
-  url: string,
+  publisherUrl: string,
   rssSummary: string | null
 ): Promise<{
   text: string | null;
@@ -877,43 +1473,36 @@ async function fetchArticleContent(
 
   resolvedUrl: string;
 }> {
-  let resolvedUrl =
-    url;
-
   /*
-   * ----------------------------------------------------------
-   * 1. Resolve Google News URL
-   * ----------------------------------------------------------
+   * IMPORTANT:
+   *
+   * This function only receives a real publisher URL.
+   * Google News URLs are deliberately rejected before
+   * this point.
    */
   if (
-    isGoogleNewsUrl(
-      resolvedUrl
+    !isValidPublisherUrl(
+      publisherUrl
     )
   ) {
-    const publisherUrl =
-      await resolveGoogleNewsUrl(
-        resolvedUrl
-      );
-
-    if (publisherUrl) {
-      resolvedUrl =
-        publisherUrl;
-    }
+    return {
+      text: null,
+      source: "failed",
+      status: "failed",
+      resolvedUrl:
+        publisherUrl,
+    };
   }
 
-  /*
-   * ----------------------------------------------------------
-   * 2. Fetch publisher page
-   * ----------------------------------------------------------
-   */
   const response =
     await fetchHtml(
-      resolvedUrl
+      publisherUrl
     );
 
   if (!response) {
     /*
-     * RSS fallback.
+     * RSS summary is only a fallback.
+     * Never use Google's boilerplate as article text.
      */
     if (
       rssSummary &&
@@ -925,12 +1514,15 @@ async function fetchArticleContent(
           GOOGLE_NEWS_BOILERPLATE.toLowerCase()
         )
     ) {
+      const rssText =
+        cleanText(
+          rssSummary
+        );
+
       return {
         text:
           truncateText(
-            cleanText(
-              rssSummary
-            ),
+            rssText,
             10000
           ),
 
@@ -938,42 +1530,45 @@ async function fetchArticleContent(
 
         status: "partial",
 
-        resolvedUrl,
+        resolvedUrl:
+          publisherUrl,
       };
     }
 
     return {
       text: null,
-
       source: "failed",
-
       status: "failed",
-
-      resolvedUrl,
+      resolvedUrl:
+        publisherUrl,
     };
   }
 
+  let resolvedUrl =
+    response.finalUrl;
+
   /*
-   * Preserve final publisher URL after redirects.
+   * Never accept a Google infrastructure URL as
+   * the article URL.
    */
   if (
-    response.finalUrl &&
-    !isGoogleNewsUrl(
-      response.finalUrl
+    !isValidPublisherUrl(
+      resolvedUrl
     )
   ) {
     resolvedUrl =
-      response.finalUrl;
+      publisherUrl;
   }
 
   const html =
     response.html;
 
   /*
-   * ----------------------------------------------------------
-   * 3. JSON-LD articleBody
-   * ----------------------------------------------------------
+   * --------------------------------------------------------
+   * 1. JSON-LD articleBody
+   * --------------------------------------------------------
    */
+
   const jsonLd =
     extractJsonLd(html);
 
@@ -1011,10 +1606,11 @@ async function fetchArticleContent(
   }
 
   /*
-   * ----------------------------------------------------------
-   * 4. <article> element
-   * ----------------------------------------------------------
+   * --------------------------------------------------------
+   * 2. <article>
+   * --------------------------------------------------------
    */
+
   const articleText =
     extractArticleElement(
       html
@@ -1047,10 +1643,11 @@ async function fetchArticleContent(
   }
 
   /*
-   * ----------------------------------------------------------
-   * 5. Paragraph extraction
-   * ----------------------------------------------------------
+   * --------------------------------------------------------
+   * 3. Paragraph extraction
+   * --------------------------------------------------------
    */
+
   const paragraphText =
     extractParagraphText(
       html
@@ -1083,18 +1680,17 @@ async function fetchArticleContent(
   }
 
   /*
-   * ----------------------------------------------------------
-   * 6. Metadata fallback
-   * ----------------------------------------------------------
+   * --------------------------------------------------------
+   * 4. Metadata
+   * --------------------------------------------------------
    */
+
   const metaText =
     extractMetaDescription(
       html
     );
 
-  if (
-    metaText
-  ) {
+  if (metaText) {
     return {
       text:
         truncateText(
@@ -1113,10 +1709,11 @@ async function fetchArticleContent(
   }
 
   /*
-   * ----------------------------------------------------------
-   * 7. RSS fallback
-   * ----------------------------------------------------------
+   * --------------------------------------------------------
+   * 5. RSS fallback
+   * --------------------------------------------------------
    */
+
   if (
     rssSummary &&
     rssSummary.trim()
@@ -1127,20 +1724,21 @@ async function fetchArticleContent(
         GOOGLE_NEWS_BOILERPLATE.toLowerCase()
       )
   ) {
+    const rssText =
+      cleanText(
+        rssSummary
+      );
+
     return {
       text:
         truncateText(
-          cleanText(
-            rssSummary
-          ),
+          rssText,
           10000
         ),
 
-      source:
-        "rss",
+      source: "rss",
 
-      status:
-        "partial",
+      status: "partial",
 
       resolvedUrl,
     };
@@ -1159,14 +1757,51 @@ async function fetchArticleContent(
   };
 }
 
-/**
- * Discover candidates from RSS feeds.
+/*
+ * ----------------------------------------------------------
+ * Candidate ID helper
+ * ----------------------------------------------------------
  */
+
+function createCandidateId(
+  articleUrl: string,
+  googleNewsUrl: string
+): string {
+  /*
+   * crypto.randomUUID() gives us the database ID.
+   *
+   * Keeping this in one helper makes the field explicit
+   * and avoids relying on database-generated IDs because
+   * the discovery route currently sends the full candidate
+   * object to Supabase.
+   */
+  void articleUrl;
+  void googleNewsUrl;
+
+  return crypto.randomUUID();
+}
+
+/*
+ * ----------------------------------------------------------
+ * Discovery
+ * ----------------------------------------------------------
+ */
+
 export async function discoverCandidates(): Promise<
   DiscoveredCandidate[]
 > {
   const candidates: DiscoveredCandidate[] =
     [];
+
+  let rawCandidateCount = 0;
+
+  let resolutionFailures = 0;
+
+  let articleFetchSuccesses = 0;
+
+  let articleFetchPartials = 0;
+
+  let articleFetchFailures = 0;
 
   for (
     const feedUrl of RSS_FEEDS
@@ -1183,7 +1818,7 @@ export async function discoverCandidates(): Promise<
 
       for (
         const rawItem of
-          feed.items as FeedItem[]
+          feed.items
       ) {
         if (
           !rawItem.title ||
@@ -1202,56 +1837,99 @@ export async function discoverCandidates(): Promise<
             ""
           ).trim();
 
-        /*
-         * Calculate relevance using the RSS
-         * headline and summary.
-         */
         const relevance =
           calculateRelevance(
             title,
             summary
           );
 
-        /*
-         * Ignore clearly irrelevant results.
-         */
         if (
           relevance.score < 25
         ) {
           continue;
         }
 
-        /*
-         * ------------------------------------------------------
-         * Resolve Google News URL to publisher URL.
-         * ------------------------------------------------------
-         */
-        const originalUrl =
-          rawItem.link;
+        rawCandidateCount++;
 
-        let articleUrl =
-          originalUrl;
+        const googleNewsUrl =
+          rawItem.link.trim();
+
+        /*
+         * ----------------------------------------------------
+         * Resolve Google News → actual publisher
+         * ----------------------------------------------------
+         */
+
+        let articleUrl:
+          | string
+          | null = null;
 
         if (
           isGoogleNewsUrl(
-            originalUrl
+            googleNewsUrl
           )
         ) {
-          const resolved =
+          articleUrl =
             await resolveGoogleNewsUrl(
-              originalUrl
+              googleNewsUrl
             );
 
-          if (resolved) {
-            articleUrl =
-              resolved;
+          if (
+            !articleUrl
+          ) {
+            resolutionFailures++;
+
+            console.warn(
+              [
+                "Google News URL resolution failed:",
+                title,
+                `googleUrl=${googleNewsUrl}`,
+              ].join(" ")
+            );
+
+            /*
+             * IMPORTANT:
+             *
+             * Do NOT save the Google News URL as article_url.
+             * Doing so was the source of the previous bug.
+             *
+             * We skip unresolved candidates entirely rather
+             * than inserting records that Gemini cannot read.
+             */
+            continue;
           }
+        } else {
+          articleUrl =
+            googleNewsUrl;
         }
 
         /*
-         * Trusted-source bonus is calculated against
-         * the actual publisher URL, not news.google.com.
+         * Final safety check.
          */
+        if (
+          !isValidPublisherUrl(
+            articleUrl
+          )
+        ) {
+          resolutionFailures++;
+
+          console.warn(
+            [
+              "Invalid publisher URL:",
+              title,
+              `url=${articleUrl}`,
+            ].join(" ")
+          );
+
+          continue;
+        }
+
+        /*
+         * ----------------------------------------------------
+         * Source / relevance
+         * ----------------------------------------------------
+         */
+
         const trusted =
           isTrustedSource(
             articleUrl
@@ -1267,28 +1945,38 @@ export async function discoverCandidates(): Promise<
             : relevance.score;
 
         /*
-         * ------------------------------------------------------
-         * Fetch actual article content.
-         * ------------------------------------------------------
+         * ----------------------------------------------------
+         * Fetch article
+         * ----------------------------------------------------
          */
+
         const articleContent =
           await fetchArticleContent(
             articleUrl,
             summary || null
           );
 
-        /*
-         * If the Google News URL could not be resolved,
-         * fetchArticleContent may still have useful fallback
-         * data. Preserve the best URL we have.
-         */
-        const finalArticleUrl =
-          articleContent.resolvedUrl ||
-          articleUrl;
+        if (
+          articleContent.status ===
+          "success"
+        ) {
+          articleFetchSuccesses++;
+        } else if (
+          articleContent.status ===
+          "partial"
+        ) {
+          articleFetchPartials++;
+        } else {
+          articleFetchFailures++;
+        }
 
-        /*
-         * Use the publisher domain as source name.
-         */
+        const finalArticleUrl =
+          isValidPublisherUrl(
+            articleContent.resolvedUrl
+          )
+            ? articleContent.resolvedUrl
+            : articleUrl;
+
         const sourceName =
           getDomain(
             finalArticleUrl
@@ -1296,67 +1984,82 @@ export async function discoverCandidates(): Promise<
           rawItem.source?.name ||
           "Unknown";
 
-        candidates.push({
-          id: crypto.randomUUID(),
+        const candidate: DiscoveredCandidate =
+          {
+            id:
+              createCandidateId(
+                finalArticleUrl,
+                googleNewsUrl
+              ),
 
-          title,
+            title,
 
-          source_url:
-            articleUrl,
+            /*
+             * source_url is now the actual publisher URL.
+             *
+             * This is what the current route expects.
+             */
+            source_url:
+              finalArticleUrl,
 
-          article_url:
-            finalArticleUrl,
+            article_url:
+              finalArticleUrl,
 
-          source_name:
-            sourceName,
+            source_name:
+              sourceName,
 
-          summary:
-            summary || null,
+            summary:
+              summary || null,
 
-          published_at:
-            rawItem.pubDate
-              ? new Date(
-                  rawItem.pubDate
-                ).toISOString()
-              : null,
+            published_at:
+              rawItem.pubDate
+                ? new Date(
+                    rawItem.pubDate
+                  ).toISOString()
+                : null,
 
-          discovered_at:
-            new Date().toISOString(),
+            discovered_at:
+              new Date().toISOString(),
 
-          status:
-            "pending",
+            status:
+              "pending",
 
-          relevance_score:
-            finalScore,
+            relevance_score:
+              finalScore,
 
-          matched_keywords:
-            relevance.matchedKeywords,
+            matched_keywords:
+              relevance.matchedKeywords,
 
-          notes:
-            null,
+            notes:
+              null,
 
-          article_text:
-            articleContent.text,
+            article_text:
+              articleContent.text,
 
-          article_text_source:
-            articleContent.source,
+            article_text_source:
+              articleContent.source,
 
-          article_text_fetched_at:
-            new Date().toISOString(),
+            article_text_fetched_at:
+              new Date().toISOString(),
 
-          article_text_length:
-            articleContent.text
-              ?.length ?? 0,
+            article_text_length:
+              articleContent.text
+                ?.length ?? 0,
 
-          article_fetch_status:
-            articleContent.status,
-        });
+            article_fetch_status:
+              articleContent.status,
+          };
+
+        candidates.push(
+          candidate
+        );
 
         console.log(
           [
             "Candidate discovered:",
             title,
             `source=${sourceName}`,
+            `url=${finalArticleUrl}`,
             `text=${articleContent.text?.length ?? 0}`,
             `status=${articleContent.status}`,
             `method=${articleContent.source}`,
@@ -1373,9 +2076,15 @@ export async function discoverCandidates(): Promise<
 
   /*
    * ----------------------------------------------------------
-   * Remove duplicates.
+   * Deduplicate
    * ----------------------------------------------------------
+   *
+   * We ONLY reach this point with a validated publisher URL.
+   *
+   * Therefore a Google image URL or Google News URL cannot
+   * collapse hundreds of candidates into one record.
    */
+
   const unique =
     Array.from(
       new Map(
@@ -1389,9 +2098,7 @@ export async function discoverCandidates(): Promise<
     );
 
   /*
-   * ----------------------------------------------------------
    * Highest relevance first.
-   * ----------------------------------------------------------
    */
   unique.sort(
     (a, b) =>
@@ -1402,8 +2109,13 @@ export async function discoverCandidates(): Promise<
   console.log(
     [
       "Discovery complete.",
-      `Raw candidates: ${candidates.length}.`,
+      `Raw candidates: ${rawCandidateCount}.`,
+      `Resolved candidates: ${candidates.length}.`,
       `Unique candidates: ${unique.length}.`,
+      `Resolution failures: ${resolutionFailures}.`,
+      `Article fetch success: ${articleFetchSuccesses}.`,
+      `Article fetch partial: ${articleFetchPartials}.`,
+      `Article fetch failed: ${articleFetchFailures}.`,
     ].join(" ")
   );
 
