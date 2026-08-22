@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  useMemo,
-  useState,
-} from "react";
-
+import { useMemo, useState } from "react";
 import type { Database } from "../../database.types";
 
 type Candidate =
@@ -26,30 +22,29 @@ type ReviewForm = {
   description: string;
 };
 
-type StatusFilter =
+type CandidateFilter =
+  | "all"
   | "pending"
   | "reviewing"
   | "accepted"
   | "rejected"
-  | "all";
+  | "ai-reviewed"
+  | "ai-recommended";
 
 type RecommendationFilter =
   | "all"
   | "publish"
   | "review"
-  | "reject"
-  | "unreviewed";
+  | "reject";
 
 type SortOption =
   | "newest"
+  | "oldest"
   | "relevance"
   | "confidence"
   | "evidence";
 
-const statusStyles: Record<
-  string,
-  string
-> = {
+const statusStyles: Record<string, string> = {
   pending:
     "bg-blue-50 text-blue-700 border-blue-200",
 
@@ -63,10 +58,7 @@ const statusStyles: Record<
     "bg-slate-100 text-slate-500 border-slate-200",
 };
 
-const severityStyles: Record<
-  string,
-  string
-> = {
+const severityStyles: Record<string, string> = {
   Critical:
     "bg-red-50 text-red-700 border-red-200",
 
@@ -92,36 +84,35 @@ const INCIDENT_CATEGORIES = [
   "Other",
 ];
 
+const MAX_BATCH_SIZE = 5;
+
 export default function CandidatesDashboard({
   initialCandidates,
   userEmail,
 }: Props) {
   const [candidates, setCandidates] =
-    useState<Candidate[]>(
-      initialCandidates
-    );
+    useState<Candidate[]>(initialCandidates);
 
   const [filter, setFilter] =
-    useState<StatusFilter>("pending");
+    useState<CandidateFilter>("pending");
 
-  const [
-    recommendationFilter,
-    setRecommendationFilter,
-  ] =
-    useState<RecommendationFilter>(
-      "all"
-    );
+  const [recommendationFilter, setRecommendationFilter] =
+    useState<RecommendationFilter>("all");
+
+  const [severityFilter, setSeverityFilter] =
+    useState("all");
+
+  const [categoryFilter, setCategoryFilter] =
+    useState("all");
+
+  const [searchQuery, setSearchQuery] =
+    useState("");
 
   const [sortOption, setSortOption] =
     useState<SortOption>("newest");
 
-  const [search, setSearch] =
-    useState("");
-
-  const [
-    selectedCandidateIds,
-    setSelectedCandidateIds,
-  ] = useState<string[]>([]);
+  const [selectedIds, setSelectedIds] =
+    useState<Set<string>>(new Set());
 
   const [runningDiscovery, setRunningDiscovery] =
     useState(false);
@@ -129,12 +120,8 @@ export default function CandidatesDashboard({
   const [discoveryMessage, setDiscoveryMessage] =
     useState("");
 
-  const [
-    reviewingCandidate,
-    setReviewingCandidate,
-  ] = useState<Candidate | null>(
-    null
-  );
+  const [reviewingCandidate, setReviewingCandidate] =
+    useState<Candidate | null>(null);
 
   const [reviewForm, setReviewForm] =
     useState<ReviewForm>({
@@ -154,199 +141,202 @@ export default function CandidatesDashboard({
   const [aiReviewing, setAiReviewing] =
     useState(false);
 
-  const [
-    batchReviewing,
-    setBatchReviewing,
-  ] = useState(false);
+  const [batchReviewing, setBatchReviewing] =
+    useState(false);
 
-  const [
-    batchProgress,
-    setBatchProgress,
-  ] = useState({
-    completed: 0,
-    total: 0,
-    failed: 0,
-  });
+  const [batchProgress, setBatchProgress] =
+    useState({
+      completed: 0,
+      failed: 0,
+      total: 0,
+    });
 
-  const counts = useMemo(
-    () => ({
-      all: candidates.length,
+  const [batchMessage, setBatchMessage] =
+    useState("");
 
-      pending: candidates.filter(
+  /*
+   * ------------------------------------------------------------
+   * Candidate counts
+   * ------------------------------------------------------------
+   */
+
+  const counts = {
+    all: candidates.length,
+
+    pending: candidates.filter(
+      (candidate) =>
+        candidate.status === "pending"
+    ).length,
+
+    reviewing: candidates.filter(
+      (candidate) =>
+        candidate.status === "reviewing"
+    ).length,
+
+    accepted: candidates.filter(
+      (candidate) =>
+        candidate.status === "accepted"
+    ).length,
+
+    rejected: candidates.filter(
+      (candidate) =>
+        candidate.status === "rejected"
+    ).length,
+
+    aiReviewed: candidates.filter(
+      (candidate) =>
+        candidate.ai_review_status ===
+        "completed"
+    ).length,
+
+    aiRecommended: candidates.filter(
+      (candidate) =>
+        candidate.ai_review_status ===
+          "completed" &&
+        candidate.ai_recommendation ===
+          "publish"
+    ).length,
+  };
+
+  /*
+   * ------------------------------------------------------------
+   * Filtering + sorting
+   * ------------------------------------------------------------
+   */
+
+  const filteredCandidates = useMemo(() => {
+    let result = [...candidates];
+
+    /*
+     * Primary status / AI filter
+     */
+
+    if (filter === "pending") {
+      result = result.filter(
         (candidate) =>
           candidate.status === "pending"
-      ).length,
+      );
+    }
 
-      reviewing: candidates.filter(
+    if (filter === "reviewing") {
+      result = result.filter(
         (candidate) =>
           candidate.status === "reviewing"
-      ).length,
+      );
+    }
 
-      accepted: candidates.filter(
+    if (filter === "accepted") {
+      result = result.filter(
         (candidate) =>
           candidate.status === "accepted"
-      ).length,
+      );
+    }
 
-      rejected: candidates.filter(
+    if (filter === "rejected") {
+      result = result.filter(
         (candidate) =>
           candidate.status === "rejected"
-      ).length,
+      );
+    }
 
-      aiPublish: candidates.filter(
+    if (filter === "ai-reviewed") {
+      result = result.filter(
+        (candidate) =>
+          candidate.ai_review_status ===
+          "completed"
+      );
+    }
+
+    if (filter === "ai-recommended") {
+      result = result.filter(
         (candidate) =>
           candidate.ai_review_status ===
             "completed" &&
           candidate.ai_recommendation ===
             "publish"
-      ).length,
-
-      aiReview: candidates.filter(
-        (candidate) =>
-          candidate.ai_review_status ===
-            "completed" &&
-          candidate.ai_recommendation ===
-            "review"
-      ).length,
-
-      aiReject: candidates.filter(
-        (candidate) =>
-          candidate.ai_review_status ===
-            "completed" &&
-          candidate.ai_recommendation ===
-            "reject"
-      ).length,
-
-      aiUnreviewed: candidates.filter(
-        (candidate) =>
-          candidate.ai_review_status !==
-          "completed"
-      ).length,
-    }),
-    [candidates]
-  );
-
-  /*
-   * ----------------------------------------------------------
-   * Filter + search + sort
-   * ----------------------------------------------------------
-   */
-
-  const filteredCandidates = useMemo(() => {
-    const normalizedSearch =
-      search.trim().toLowerCase();
-
-    const filtered =
-      candidates.filter(
-        (candidate) => {
-          /*
-           * Status filter
-           */
-
-          if (
-            filter !== "all" &&
-            candidate.status !== filter
-          ) {
-            return false;
-          }
-
-          /*
-           * AI recommendation filter
-           */
-
-          if (
-            recommendationFilter ===
-            "unreviewed"
-          ) {
-            if (
-              candidate.ai_review_status ===
-              "completed"
-            ) {
-              return false;
-            }
-          } else if (
-            recommendationFilter !==
-            "all"
-          ) {
-            if (
-              candidate.ai_recommendation !==
-              recommendationFilter
-            ) {
-              return false;
-            }
-          }
-
-          /*
-           * Search
-           */
-
-          if (
-            normalizedSearch.length > 0
-          ) {
-            const searchable = [
-              candidate.title,
-              candidate.source_name,
-              candidate.summary,
-              candidate.ai_company,
-              candidate.ai_model,
-              candidate.ai_category,
-              ...(candidate.matched_keywords ??
-                []),
-            ]
-              .filter(Boolean)
-              .join(" ")
-              .toLowerCase();
-
-            if (
-              !searchable.includes(
-                normalizedSearch
-              )
-            ) {
-              return false;
-            }
-          }
-
-          return true;
-        }
       );
+    }
 
     /*
-     * Sort after filtering.
+     * AI recommendation
      */
 
-    return [...filtered].sort(
-      (a, b) => {
-        if (
-          sortOption ===
-          "relevance"
-        ) {
-          return (
-            (b.relevance_score ?? 0) -
-            (a.relevance_score ?? 0)
+    if (
+      recommendationFilter !==
+      "all"
+    ) {
+      result = result.filter(
+        (candidate) =>
+          candidate.ai_recommendation ===
+          recommendationFilter
+      );
+    }
+
+    /*
+     * Severity
+     */
+
+    if (severityFilter !== "all") {
+      result = result.filter(
+        (candidate) =>
+          candidate.ai_severity ===
+          severityFilter
+      );
+    }
+
+    /*
+     * Category
+     */
+
+    if (categoryFilter !== "all") {
+      result = result.filter(
+        (candidate) =>
+          candidate.ai_category ===
+          categoryFilter
+      );
+    }
+
+    /*
+     * Search
+     */
+
+    const query =
+      searchQuery
+        .trim()
+        .toLowerCase();
+
+    if (query) {
+      result = result.filter(
+        (candidate) => {
+          const searchable = [
+            candidate.title,
+            candidate.source_name,
+            candidate.summary,
+            candidate.ai_company,
+            candidate.ai_model,
+            candidate.ai_category,
+            candidate.ai_incident_summary,
+            candidate.ai_incident_description,
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+
+          return searchable.includes(
+            query
           );
         }
+      );
+    }
 
-        if (
-          sortOption ===
-          "confidence"
-        ) {
-          return (
-            (b.ai_confidence ?? 0) -
-            (a.ai_confidence ?? 0)
-          );
-        }
+    /*
+     * Sorting
+     */
 
-        if (
-          sortOption ===
-          "evidence"
-        ) {
-          return (
-            (b.ai_evidence_quality ??
-              0) -
-            (a.ai_evidence_quality ??
-              0)
-          );
-        }
-
+    result.sort((a, b) => {
+      if (
+        sortOption === "newest"
+      ) {
         return (
           new Date(
             b.discovered_at
@@ -356,22 +346,76 @@ export default function CandidatesDashboard({
           ).getTime()
         );
       }
-    );
+
+      if (
+        sortOption === "oldest"
+      ) {
+        return (
+          new Date(
+            a.discovered_at
+          ).getTime() -
+          new Date(
+            b.discovered_at
+          ).getTime()
+        );
+      }
+
+      if (
+        sortOption === "relevance"
+      ) {
+        return (
+          (b.relevance_score ?? 0) -
+          (a.relevance_score ?? 0)
+        );
+      }
+
+      if (
+        sortOption === "confidence"
+      ) {
+        return (
+          (b.ai_confidence ?? 0) -
+          (a.ai_confidence ?? 0)
+        );
+      }
+
+      if (
+        sortOption === "evidence"
+      ) {
+        return (
+          (b.ai_evidence_quality ??
+            0) -
+          (a.ai_evidence_quality ??
+            0)
+        );
+      }
+
+      return 0;
+    });
+
+    return result;
   }, [
     candidates,
     filter,
     recommendationFilter,
-    search,
+    severityFilter,
+    categoryFilter,
+    searchQuery,
     sortOption,
   ]);
 
   /*
-   * ----------------------------------------------------------
-   * Selection
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
+   * Eligible candidates for batch review
+   * ------------------------------------------------------------
+   *
+   * We allow pending/reviewing candidates to be
+   * batch reviewed. Completed AI reviews can also
+   * be selected for a deliberate re-run.
+   *
+   * Accepted/rejected candidates are excluded.
    */
 
-  const selectableCandidates =
+  const eligibleCandidates =
     filteredCandidates.filter(
       (candidate) =>
         candidate.status ===
@@ -380,75 +424,76 @@ export default function CandidatesDashboard({
           "reviewing"
     );
 
-  const allVisibleSelected =
-    selectableCandidates.length >
-      0 &&
-    selectableCandidates.every(
-      (candidate) =>
-        selectedCandidateIds.includes(
+  const selectableIds =
+    eligibleCandidates
+      .filter(
+        (candidate) =>
+          candidate.ai_review_status !==
+          "reviewing"
+      )
+      .map(
+        (candidate) =>
           candidate.id
-        )
+      );
+
+  const allVisibleSelected =
+    selectableIds.length > 0 &&
+    selectableIds.every((id) =>
+      selectedIds.has(id)
     );
+
+  /*
+   * ------------------------------------------------------------
+   * Selection
+   * ------------------------------------------------------------
+   */
 
   function toggleCandidateSelection(
     id: string
   ) {
-    setSelectedCandidateIds(
-      (current) =>
-        current.includes(id)
-          ? current.filter(
-              (candidateId) =>
-                candidateId !== id
-            )
-          : [
-              ...current,
-              id,
-            ]
-    );
+    setSelectedIds((current) => {
+      const next = new Set(
+        current
+      );
+
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+
+      return next;
+    });
   }
 
   function toggleSelectAllVisible() {
-    if (allVisibleSelected) {
-      setSelectedCandidateIds(
-        (current) =>
-          current.filter(
-            (id) =>
-              !selectableCandidates.some(
-                (candidate) =>
-                  candidate.id ===
-                  id
-              )
-          )
+    setSelectedIds((current) => {
+      const next = new Set(
+        current
       );
 
-      return;
-    }
-
-    setSelectedCandidateIds(
-      (current) => {
-        const next = new Set(
-          current
+      if (allVisibleSelected) {
+        selectableIds.forEach(
+          (id) => next.delete(id)
         );
-
-        selectableCandidates.forEach(
-          (candidate) => {
-            next.add(candidate.id);
-          }
+      } else {
+        selectableIds.forEach(
+          (id) => next.add(id)
         );
-
-        return Array.from(next);
       }
-    );
+
+      return next;
+    });
   }
 
   function clearSelection() {
-    setSelectedCandidateIds([]);
+    setSelectedIds(new Set());
   }
 
   /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Discovery
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    */
 
   async function runDiscovery() {
@@ -491,69 +536,19 @@ export default function CandidatesDashboard({
   }
 
   /*
-   * ----------------------------------------------------------
-   * Helpers
-   * ----------------------------------------------------------
-   */
-
-  function populateReviewForm(
-    candidate: Candidate
-  ) {
-    setReviewForm({
-      title:
-        candidate.title,
-
-      company:
-        candidate.ai_company ??
-        "",
-
-      model:
-        candidate.ai_model ??
-        "",
-
-      severity:
-        candidate.ai_severity ??
-        "Moderate",
-
-      category:
-        candidate.ai_category ??
-        "",
-
-      occurredAt:
-        candidate.published_at
-          ? candidate.published_at.slice(
-              0,
-              10
-            )
-          : "",
-
-      summary:
-        candidate.ai_incident_summary ??
-        candidate.summary ??
-        "",
-
-      description:
-        candidate.ai_incident_description ??
-        candidate.summary ??
-        "",
-    });
-  }
-
-  /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Individual AI review
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    */
 
   async function runAIReview(
-    candidate: Candidate,
-    openModal = true
+    candidate: Candidate
   ) {
     if (
       aiReviewing ||
       batchReviewing
     ) {
-      return false;
+      return;
     }
 
     setAiReviewing(true);
@@ -563,8 +558,8 @@ export default function CandidatesDashboard({
         candidate;
 
       /*
-       * Move pending candidates into
-       * the editorial reviewing state.
+       * If the candidate is still pending,
+       * move it into reviewing first.
        */
 
       if (
@@ -592,20 +587,19 @@ export default function CandidatesDashboard({
         currentCandidate =
           reviewResult.candidate;
 
-        setCandidates(
-          (current) =>
-            current.map(
-              (item) =>
-                item.id ===
-                candidate.id
-                  ? currentCandidate
-                  : item
-            )
+        setCandidates((current) =>
+          current.map((item) =>
+            item.id ===
+            candidate.id
+              ? currentCandidate
+              : item
+          )
         );
       }
 
       /*
-       * Run the AI assessment.
+       * Ask AI reviewer to analyze
+       * the source article.
        */
 
       const response =
@@ -626,67 +620,75 @@ export default function CandidatesDashboard({
         );
       }
 
-      const reviewed =
-        result.candidate as Candidate;
-
-      setCandidates(
-        (current) =>
-          current.map(
-            (item) =>
-              item.id ===
-              candidate.id
-                ? reviewed
-                : item
-          )
+      setCandidates((current) =>
+        current.map((item) =>
+          item.id ===
+          candidate.id
+            ? result.candidate
+            : item
+        )
       );
 
-      /*
-       * Open the editorial form for
-       * individual reviews.
-       *
-       * Batch reviews do NOT open a
-       * modal for every article.
-       */
+      const reviewed =
+        result.candidate;
 
-      if (openModal) {
-        setReviewingCandidate(
-          reviewed
-        );
+      setReviewingCandidate(
+        reviewed
+      );
 
-        populateReviewForm(
-          reviewed
-        );
-      }
+      setReviewForm({
+        title:
+          reviewed.title,
 
-      return true;
+        company:
+          reviewed.ai_company ??
+          "",
+
+        model:
+          reviewed.ai_model ??
+          "",
+
+        severity:
+          reviewed.ai_severity ??
+          "Moderate",
+
+        category:
+          reviewed.ai_category ??
+          "",
+
+        occurredAt:
+          reviewed.published_at
+            ? reviewed.published_at.slice(
+                0,
+                10
+              )
+            : "",
+
+        summary:
+          reviewed.ai_incident_summary ??
+          reviewed.summary ??
+          "",
+
+        description:
+          reviewed.ai_incident_description ??
+          reviewed.summary ??
+          "",
+      });
     } catch (error) {
-      if (openModal) {
-        alert(
-          error instanceof Error
-            ? error.message
-            : "AI review failed."
-        );
-      }
-
-      return false;
+      alert(
+        error instanceof Error
+          ? error.message
+          : "AI review failed."
+      );
     } finally {
       setAiReviewing(false);
     }
   }
 
   /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Batch AI review
-   * ----------------------------------------------------------
-   *
-   * Reviews one candidate at a time.
-   *
-   * This is intentional:
-   *
-   * - avoids hammering Gemini
-   * - avoids simultaneous database writes
-   * - makes progress visible
-   * - makes failures isolated
+   * ------------------------------------------------------------
    */
 
   async function runBatchAIReview() {
@@ -697,24 +699,15 @@ export default function CandidatesDashboard({
       return;
     }
 
-    const candidatesToReview =
-      candidates.filter(
-        (candidate) =>
-          selectedCandidateIds.includes(
-            candidate.id
-          ) &&
-          (candidate.status ===
-            "pending" ||
-            candidate.status ===
-              "reviewing")
-      );
+    const ids = Array.from(
+      selectedIds
+    ).filter((id) =>
+      selectableIds.includes(id)
+    );
 
-    if (
-      candidatesToReview.length ===
-      0
-    ) {
+    if (ids.length === 0) {
       alert(
-        "Select at least one pending or reviewing candidate."
+        "Select at least one candidate to review."
       );
 
       return;
@@ -724,135 +717,162 @@ export default function CandidatesDashboard({
 
     setBatchProgress({
       completed: 0,
-      total:
-        candidatesToReview.length,
       failed: 0,
+      total: ids.length,
     });
 
-    let completed = 0;
-    let failed = 0;
+    setBatchMessage("");
 
     try {
+      let completed = 0;
+      let failed = 0;
+
+      /*
+       * The API accepts a maximum of five
+       * candidates per request.
+       */
+
+      const batches: string[][] = [];
+
       for (
-        const candidate of candidatesToReview
+        let i = 0;
+        i < ids.length;
+        i += MAX_BATCH_SIZE
       ) {
-        try {
-          /*
-           * Mark pending candidates as
-           * reviewing before sending to AI.
-           */
+        batches.push(
+          ids.slice(
+            i,
+            i + MAX_BATCH_SIZE
+          )
+        );
+      }
 
-          if (
-            candidate.status ===
-            "pending"
-          ) {
-            const reviewResponse =
-              await fetch(
-                `/api/admin/candidates/${candidate.id}/review`,
-                {
-                  method: "POST",
-                }
-              );
+      /*
+       * Process batches sequentially.
+       *
+       * Each API request itself processes
+       * two Gemini calls concurrently.
+       */
 
-            const reviewResult =
-              await reviewResponse.json();
+      for (
+        const batch of batches
+      ) {
+        const response =
+          await fetch(
+            "/api/admin/candidates/batch-ai-review",
+            {
+              method: "POST",
 
-            if (
-              !reviewResponse.ok
-            ) {
-              throw new Error(
-                reviewResult.error ||
-                  "Unable to start review."
-              );
+              headers: {
+                "Content-Type":
+                  "application/json",
+              },
+
+              body: JSON.stringify({
+                candidateIds:
+                  batch,
+              }),
             }
-
-            setCandidates(
-              (current) =>
-                current.map(
-                  (item) =>
-                    item.id ===
-                    candidate.id
-                      ? reviewResult.candidate
-                      : item
-                )
-            );
-          }
-
-          /*
-           * Run AI.
-           */
-
-          const response =
-            await fetch(
-              `/api/admin/candidates/${candidate.id}/ai-review`,
-              {
-                method: "POST",
-              }
-            );
-
-          const result =
-            await response.json();
-
-          if (!response.ok) {
-            throw new Error(
-              result.error ||
-                "AI review failed."
-            );
-          }
-
-          setCandidates(
-            (current) =>
-              current.map(
-                (item) =>
-                  item.id ===
-                  candidate.id
-                    ? result.candidate
-                    : item
-              )
           );
 
-          completed++;
-        } catch (error) {
-          console.error(
-            `Batch AI review failed for candidate ${candidate.id}:`,
-            error
-          );
+        const result =
+          await response.json();
 
-          failed++;
+        if (!response.ok) {
+          failed +=
+            batch.length;
+
+          setBatchProgress({
+            completed,
+            failed,
+            total: ids.length,
+          });
+
+          continue;
         }
+
+        /*
+         * Update candidates returned by
+         * the backend.
+         */
+
+        if (
+          Array.isArray(
+            result.results
+          )
+        ) {
+          setCandidates(
+            (current) => {
+              const updated =
+                [...current];
+
+              for (
+                const batchResult of result.results
+              ) {
+                if (
+                  !batchResult.candidate
+                ) {
+                  continue;
+                }
+
+                const index =
+                  updated.findIndex(
+                    (candidate) =>
+                      candidate.id ===
+                      batchResult.id
+                  );
+
+                if (
+                  index !== -1
+                ) {
+                  updated[index] =
+                    batchResult.candidate;
+                }
+              }
+
+              return updated;
+            }
+          );
+        }
+
+        completed +=
+          result.completed ??
+          0;
+
+        failed +=
+          result.failed ?? 0;
 
         setBatchProgress({
           completed,
-          total:
-            candidatesToReview.length,
           failed,
+          total: ids.length,
         });
       }
+
+      setBatchMessage(
+        `Batch AI review complete — ${completed} completed${
+          failed > 0
+            ? `, ${failed} failed`
+            : ""
+        }.`
+      );
+
+      clearSelection();
+    } catch (error) {
+      setBatchMessage(
+        error instanceof Error
+          ? error.message
+          : "Batch AI review failed."
+      );
     } finally {
       setBatchReviewing(false);
-
-      /*
-       * Remove successfully processed
-       * candidates from selection.
-       */
-
-      setSelectedCandidateIds(
-        (current) =>
-          current.filter(
-            (id) =>
-              !candidatesToReview.some(
-                (candidate) =>
-                  candidate.id === id
-              )
-          )
-      );
     }
   }
 
   /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Manual review
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    */
 
   async function openReview(
@@ -887,15 +907,13 @@ export default function CandidatesDashboard({
         currentCandidate =
           result.candidate;
 
-        setCandidates(
-          (current) =>
-            current.map(
-              (item) =>
-                item.id ===
-                candidate.id
-                  ? currentCandidate
-                  : item
-            )
+        setCandidates((current) =>
+          current.map((item) =>
+            item.id ===
+            candidate.id
+              ? currentCandidate
+              : item
+          )
         );
       }
 
@@ -903,9 +921,44 @@ export default function CandidatesDashboard({
         currentCandidate
       );
 
-      populateReviewForm(
-        currentCandidate
-      );
+      setReviewForm({
+        title:
+          currentCandidate.title,
+
+        company:
+          currentCandidate.ai_company ??
+          "",
+
+        model:
+          currentCandidate.ai_model ??
+          "",
+
+        severity:
+          currentCandidate.ai_severity ??
+          "Moderate",
+
+        category:
+          currentCandidate.ai_category ??
+          "",
+
+        occurredAt:
+          currentCandidate.published_at
+            ? currentCandidate.published_at.slice(
+                0,
+                10
+              )
+            : "",
+
+        summary:
+          currentCandidate.ai_incident_summary ??
+          currentCandidate.summary ??
+          "",
+
+        description:
+          currentCandidate.ai_incident_description ??
+          currentCandidate.summary ??
+          "",
+      });
     } catch (error) {
       alert(
         error instanceof Error
@@ -920,25 +973,25 @@ export default function CandidatesDashboard({
       return;
     }
 
-    setReviewingCandidate(null);
+    setReviewingCandidate(
+      null
+    );
   }
 
   function updateForm(
     field: keyof ReviewForm,
     value: string
   ) {
-    setReviewForm(
-      (current) => ({
-        ...current,
-        [field]: value,
-      })
-    );
+    setReviewForm((current) => ({
+      ...current,
+      [field]: value,
+    }));
   }
 
   /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Publish
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    */
 
   async function publishIncident(
@@ -946,9 +999,7 @@ export default function CandidatesDashboard({
   ) {
     event.preventDefault();
 
-    if (
-      !reviewingCandidate
-    ) {
+    if (!reviewingCandidate) {
       return;
     }
 
@@ -1017,29 +1068,20 @@ export default function CandidatesDashboard({
           new Date().toISOString(),
       };
 
-      setCandidates(
-        (current) =>
-          current.map(
-            (candidate) =>
-              candidate.id ===
-              reviewingCandidate.id
-                ? updatedCandidate
-                : candidate
-          )
-      );
-
-      setSelectedCandidateIds(
-        (current) =>
-          current.filter(
-            (id) =>
-              id !==
-              reviewingCandidate.id
-          )
+      setCandidates((current) =>
+        current.map((candidate) =>
+          candidate.id ===
+          reviewingCandidate.id
+            ? updatedCandidate
+            : candidate
+        )
       );
 
       setPublishing(false);
 
-      setReviewingCandidate(null);
+      setReviewingCandidate(
+        null
+      );
 
       alert(
         `Incident "${result.incident.title}" published successfully.`
@@ -1056,9 +1098,9 @@ export default function CandidatesDashboard({
   }
 
   /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Reject
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    */
 
   async function rejectCandidate(
@@ -1092,30 +1134,36 @@ export default function CandidatesDashboard({
         );
       }
 
-      setCandidates(
-        (current) =>
-          current.map(
-            (item) =>
-              item.id ===
-              candidate.id
-                ? result.candidate
-                : item
-          )
+      setCandidates((current) =>
+        current.map((item) =>
+          item.id ===
+          candidate.id
+            ? result.candidate
+            : item
+        )
       );
 
-      setSelectedCandidateIds(
-        (current) =>
-          current.filter(
-            (id) =>
-              id !== candidate.id
-          )
+      setSelectedIds(
+        (current) => {
+          const next = new Set(
+            current
+          );
+
+          next.delete(
+            candidate.id
+          );
+
+          return next;
+        }
       );
 
       if (
         reviewingCandidate?.id ===
         candidate.id
       ) {
-        setReviewingCandidate(null);
+        setReviewingCandidate(
+          null
+        );
       }
     } catch (error) {
       alert(
@@ -1127,9 +1175,9 @@ export default function CandidatesDashboard({
   }
 
   /*
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    * Delete
-   * ----------------------------------------------------------
+   * ------------------------------------------------------------
    */
 
   async function deleteCandidate(
@@ -1162,27 +1210,32 @@ export default function CandidatesDashboard({
         );
       }
 
-      setCandidates(
-        (current) =>
-          current.filter(
-            (candidate) =>
-              candidate.id !== id
-          )
+      setCandidates((current) =>
+        current.filter(
+          (candidate) =>
+            candidate.id !== id
+        )
       );
 
-      setSelectedCandidateIds(
-        (current) =>
-          current.filter(
-            (candidateId) =>
-              candidateId !== id
-          )
+      setSelectedIds(
+        (current) => {
+          const next = new Set(
+            current
+          );
+
+          next.delete(id);
+
+          return next;
+        }
       );
 
       if (
         reviewingCandidate?.id ===
         id
       ) {
-        setReviewingCandidate(null);
+        setReviewingCandidate(
+          null
+        );
       }
     } catch (error) {
       alert(
@@ -1193,12 +1246,20 @@ export default function CandidatesDashboard({
     }
   }
 
+  /*
+   * ------------------------------------------------------------
+   * Render
+   * ------------------------------------------------------------
+   */
+
   return (
     <div className="min-h-screen bg-slate-100">
+
       {/* Header */}
 
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+
           <div>
             <div className="text-xs font-bold tracking-[0.25em] text-blue-600">
               FRONTIER
@@ -1210,6 +1271,7 @@ export default function CandidatesDashboard({
           </div>
 
           <div className="flex items-center gap-4">
+
             <span className="hidden text-sm text-slate-500 md:block">
               {userEmail}
             </span>
@@ -1225,19 +1287,30 @@ export default function CandidatesDashboard({
                 Sign out
               </button>
             </form>
+
           </div>
+
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-6 py-8">
+
         {/* Navigation */}
 
-        <div className="mb-8 flex gap-2">
+        <div className="mb-8 flex flex-wrap gap-2">
+
           <a
             href="/admin"
             className="rounded-lg px-4 py-2 text-sm font-medium text-slate-500 hover:bg-white"
           >
-            Incidents
+            Overview
+          </a>
+
+          <a
+            href="/admin/discovery"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-500 hover:bg-white"
+          >
+            Discovery
           </a>
 
           <a
@@ -1246,12 +1319,15 @@ export default function CandidatesDashboard({
           >
             Candidates
           </a>
+
         </div>
 
-        {/* Header */}
+        {/* Page heading */}
 
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+
           <div>
+
             <h2 className="text-2xl font-bold text-slate-950">
               Incident candidates
             </h2>
@@ -1260,20 +1336,19 @@ export default function CandidatesDashboard({
               Articles and reports discovered by Frontier
               that may represent an AI incident.
             </p>
+
           </div>
 
           <button
             onClick={runDiscovery}
-            disabled={
-              runningDiscovery ||
-              batchReviewing
-            }
+            disabled={runningDiscovery}
             className="shrink-0 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {runningDiscovery
               ? "Scanning..."
               : "Run discovery"}
           </button>
+
         </div>
 
         {discoveryMessage && (
@@ -1282,58 +1357,10 @@ export default function CandidatesDashboard({
           </div>
         )}
 
-        {/* Batch progress */}
-
-        {batchReviewing && (
-          <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-5">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-bold text-blue-900">
-                  AI batch review in progress
-                </p>
-
-                <p className="mt-1 text-xs text-blue-700">
-                  Frontier is reviewing candidates one at a time to
-                  avoid unnecessary API rate pressure.
-                </p>
-              </div>
-
-              <div className="text-sm font-bold text-blue-900">
-                {batchProgress.completed} /{" "}
-                {batchProgress.total}
-              </div>
-            </div>
-
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-blue-100">
-              <div
-                className="h-full rounded-full bg-blue-600 transition-all"
-                style={{
-                  width:
-                    batchProgress.total > 0
-                      ? `${
-                          (batchProgress.completed /
-                            batchProgress.total) *
-                          100
-                        }%`
-                      : "0%",
-                }}
-              />
-            </div>
-
-            {batchProgress.failed > 0 && (
-              <p className="mt-2 text-xs font-medium text-red-600">
-                {batchProgress.failed} review
-                {batchProgress.failed === 1
-                  ? ""
-                  : "s"} failed.
-              </p>
-            )}
-          </div>
-        )}
-
         {/* Stats */}
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
+
           <CandidateStat
             label="All"
             value={counts.all}
@@ -1352,193 +1379,452 @@ export default function CandidatesDashboard({
           />
 
           <CandidateStat
-            label="AI Strong"
-            value={counts.aiPublish}
+            label="AI Reviewed"
+            value={counts.aiReviewed}
+            color="slate"
+          />
+
+          <CandidateStat
+            label="AI Recommended"
+            value={counts.aiRecommended}
             color="green"
           />
 
           <CandidateStat
-            label="AI Review"
-            value={counts.aiReview}
-            color="yellow"
+            label="Accepted"
+            value={counts.accepted}
+            color="green"
           />
+
+          <CandidateStat
+            label="Rejected"
+            value={counts.rejected}
+          />
+
         </div>
 
-        {/* Search + filters */}
+        {/* Status filters */}
 
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
-            <input
-              value={search}
+        <div className="mt-6 flex flex-wrap gap-2">
+
+          {[
+            ["pending", "Pending"],
+            ["reviewing", "Reviewing"],
+            ["ai-reviewed", "AI Reviewed"],
+            ["ai-recommended", "AI Recommended"],
+            ["accepted", "Accepted"],
+            ["rejected", "Rejected"],
+            ["all", "All"],
+          ].map(
+            ([value, label]) => (
+              <button
+                key={value}
+                onClick={() =>
+                  setFilter(
+                    value as CandidateFilter
+                  )
+                }
+                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                  filter === value
+                    ? "bg-blue-600 text-white"
+                    : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            )
+          )}
+
+        </div>
+
+        {/* Advanced filters */}
+
+        <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-4">
+
+          <div className="grid gap-3 lg:grid-cols-5">
+
+            {/* Search */}
+
+            <div className="lg:col-span-2">
+
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Search
+              </label>
+
+              <input
+                value={searchQuery}
+                onChange={(event) =>
+                  setSearchQuery(
+                    event.target.value
+                  )
+                }
+                placeholder="Search titles, companies, models..."
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+              />
+
+            </div>
+
+            {/* Recommendation */}
+
+            <div>
+
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                AI recommendation
+              </label>
+
+              <select
+                value={
+                  recommendationFilter
+                }
+                onChange={(event) =>
+                  setRecommendationFilter(
+                    event.target
+                      .value as RecommendationFilter
+                  )
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="all">
+                  All recommendations
+                </option>
+
+                <option value="publish">
+                  Publish
+                </option>
+
+                <option value="review">
+                  Review
+                </option>
+
+                <option value="reject">
+                  Reject
+                </option>
+              </select>
+
+            </div>
+
+            {/* Severity */}
+
+            <div>
+
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Severity
+              </label>
+
+              <select
+                value={
+                  severityFilter
+                }
+                onChange={(event) =>
+                  setSeverityFilter(
+                    event.target.value
+                  )
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="all">
+                  All severities
+                </option>
+
+                <option value="Critical">
+                  Critical
+                </option>
+
+                <option value="High">
+                  High
+                </option>
+
+                <option value="Moderate">
+                  Moderate
+                </option>
+
+                <option value="Low">
+                  Low
+                </option>
+              </select>
+
+            </div>
+
+            {/* Sort */}
+
+            <div>
+
+              <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Sort
+              </label>
+
+              <select
+                value={sortOption}
+                onChange={(event) =>
+                  setSortOption(
+                    event.target
+                      .value as SortOption
+                  )
+                }
+                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
+              >
+                <option value="newest">
+                  Newest discovered
+                </option>
+
+                <option value="oldest">
+                  Oldest discovered
+                </option>
+
+                <option value="relevance">
+                  Relevance
+                </option>
+
+                <option value="confidence">
+                  AI confidence
+                </option>
+
+                <option value="evidence">
+                  Evidence quality
+                </option>
+              </select>
+
+            </div>
+
+          </div>
+
+          {/* Category */}
+
+          <div className="mt-3 max-w-xs">
+
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Category
+            </label>
+
+            <select
+              value={
+                categoryFilter
+              }
               onChange={(event) =>
-                setSearch(
+                setCategoryFilter(
                   event.target.value
                 )
               }
-              placeholder="Search candidates, companies, models, sources..."
-              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-500"
-            />
-
-            <select
-              value={recommendationFilter}
-              onChange={(event) =>
-                setRecommendationFilter(
-                  event.target
-                    .value as RecommendationFilter
-                )
-              }
-              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-500"
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
             >
               <option value="all">
-                All AI recommendations
+                All categories
               </option>
 
-              <option value="publish">
-                AI: Strong candidates
-              </option>
-
-              <option value="review">
-                AI: Needs review
-              </option>
-
-              <option value="reject">
-                AI: Reject
-              </option>
-
-              <option value="unreviewed">
-                Not AI reviewed
-              </option>
-            </select>
-
-            <select
-              value={sortOption}
-              onChange={(event) =>
-                setSortOption(
-                  event.target
-                    .value as SortOption
+              {INCIDENT_CATEGORIES.map(
+                (category) => (
+                  <option
+                    key={category}
+                    value={category}
+                  >
+                    {category}
+                  </option>
                 )
-              }
-              className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 outline-none focus:border-blue-500"
-            >
-              <option value="newest">
-                Newest first
-              </option>
+              )}
 
-              <option value="relevance">
-                Highest relevance
-              </option>
-
-              <option value="confidence">
-                Highest AI confidence
-              </option>
-
-              <option value="evidence">
-                Strongest evidence
-              </option>
             </select>
+
           </div>
 
-          {/* Status filters */}
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {[
-              ["pending", "Pending"],
-              ["reviewing", "Reviewing"],
-              ["accepted", "Accepted"],
-              ["rejected", "Rejected"],
-              ["all", "All"],
-            ].map(
-              ([value, label]) => (
-                <button
-                  key={value}
-                  onClick={() =>
-                    setFilter(
-                      value as StatusFilter
-                    )
-                  }
-                  className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
-                    filter === value
-                      ? "bg-blue-600 text-white"
-                      : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
-                >
-                  {label}
-                </button>
-              )
-            )}
-          </div>
         </div>
 
-        {/* Batch controls */}
+        {/* Batch toolbar */}
 
-        <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={
-                toggleSelectAllVisible
-              }
-              disabled={
-                selectableCandidates.length ===
-                  0 ||
-                batchReviewing
-              }
-              className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {allVisibleSelected
-                ? "Clear visible"
-                : "Select visible"}
-            </button>
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-4">
 
-            {selectedCandidateIds.length >
-              0 && (
-              <button
-                onClick={
-                  clearSelection
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+
+            <div className="flex items-center gap-3">
+
+              <input
+                type="checkbox"
+                checked={
+                  allVisibleSelected
+                }
+                onChange={
+                  toggleSelectAllVisible
                 }
                 disabled={
-                  batchReviewing
+                  selectableIds.length ===
+                  0
                 }
-                className="text-sm font-medium text-slate-500 hover:text-slate-800"
-              >
-                Clear selection
-              </button>
-            )}
+                className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+              />
 
-            <span className="text-sm text-slate-400">
-              {selectedCandidateIds.length}{" "}
-              selected
-            </span>
+              <div>
+
+                <p className="text-sm font-semibold text-slate-900">
+                  {selectedIds.size > 0
+                    ? `${selectedIds.size} candidate${
+                        selectedIds.size ===
+                        1
+                          ? ""
+                          : "s"
+                      } selected`
+                    : "Select candidates"}
+                </p>
+
+                <p className="text-xs text-slate-400">
+                  Select candidates below to run
+                  AI review in batches.
+                </p>
+
+              </div>
+
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+
+              {selectedIds.size > 0 && (
+                <button
+                  onClick={
+                    clearSelection
+                  }
+                  disabled={
+                    batchReviewing
+                  }
+                  className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Clear selection
+                </button>
+              )}
+
+              <button
+                onClick={
+                  runBatchAIReview
+                }
+                disabled={
+                  batchReviewing ||
+                  selectedIds.size ===
+                    0
+                }
+                className="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {batchReviewing
+                  ? "Reviewing..."
+                  : `AI Review Selected${
+                      selectedIds.size >
+                      0
+                        ? ` (${selectedIds.size})`
+                        : ""
+                    }`}
+              </button>
+
+            </div>
+
           </div>
 
-          <button
-            onClick={
-              runBatchAIReview
-            }
-            disabled={
-              batchReviewing ||
-              aiReviewing ||
-              selectedCandidateIds.length ===
-                0
-            }
-            className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {batchReviewing
-              ? `Reviewing ${batchProgress.completed}/${batchProgress.total}...`
-              : `AI Review ${
-                  selectedCandidateIds.length >
-                  0
-                    ? `(${selectedCandidateIds.length})`
-                    : "selected"
-                }`}
-          </button>
+          {/* Batch progress */}
+
+          {batchReviewing && (
+            <div className="mt-4 border-t border-slate-100 pt-4">
+
+              <div className="flex items-center justify-between text-xs">
+
+                <span className="font-semibold text-slate-700">
+                  AI review in progress
+                </span>
+
+                <span className="text-slate-400">
+                  {
+                    batchProgress.completed
+                  }{" "}
+                  /{" "}
+                  {
+                    batchProgress.total
+                  }{" "}
+                  completed
+                </span>
+
+              </div>
+
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-100">
+
+                <div
+                  className="h-full rounded-full bg-blue-600 transition-all"
+                  style={{
+                    width: `${
+                      batchProgress.total >
+                      0
+                        ? Math.min(
+                            100,
+                            ((batchProgress.completed +
+                              batchProgress.failed) /
+                              batchProgress.total) *
+                              100
+                          )
+                        : 0
+                    }%`,
+                  }}
+                />
+
+              </div>
+
+              {batchProgress.failed >
+                0 && (
+                <p className="mt-2 text-xs text-red-500">
+                  {
+                    batchProgress.failed
+                  }{" "}
+                  candidate
+                  {batchProgress.failed ===
+                  1
+                    ? ""
+                    : "s"}{" "}
+                  failed.
+                </p>
+              )}
+
+            </div>
+          )}
+
+          {batchMessage && (
+            <div className="mt-4 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700">
+              {batchMessage}
+            </div>
+          )}
+
         </div>
 
-        {/* Candidate list */}
+        {/* Candidate count */}
 
-        <div className="mt-6 space-y-4">
+        <div className="mt-6 flex items-center justify-between">
+
+          <p className="text-sm text-slate-500">
+            Showing{" "}
+            <span className="font-semibold text-slate-700">
+              {
+                filteredCandidates.length
+              }
+            </span>{" "}
+            candidate
+            {filteredCandidates.length ===
+            1
+              ? ""
+              : "s"}
+          </p>
+
+          {selectedIds.size >
+            0 && (
+            <p className="text-xs font-medium text-blue-600">
+              {
+                selectedIds.size
+              }{" "}
+              selected
+            </p>
+          )}
+
+        </div>
+
+        {/* Candidates */}
+
+        <div className="mt-3 space-y-4">
+
           {filteredCandidates.length ===
           0 ? (
+
             <div className="rounded-2xl border border-slate-200 bg-white px-6 py-16 text-center">
+
               <div className="text-3xl">
                 ✓
               </div>
@@ -1548,12 +1834,17 @@ export default function CandidatesDashboard({
               </h3>
 
               <p className="mt-1 text-sm text-slate-500">
-                No candidates match the current filters.
+                No candidates match these
+                filters.
               </p>
+
             </div>
+
           ) : (
+
             filteredCandidates.map(
               (candidate) => {
+
                 const isNew =
                   Date.now() -
                     new Date(
@@ -1564,217 +1855,190 @@ export default function CandidatesDashboard({
                     60 *
                     1000;
 
-                const selectable =
+                const isSelectable =
                   candidate.status ===
                     "pending" ||
                   candidate.status ===
                     "reviewing";
 
-                const selected =
-                  selectedCandidateIds.includes(
+                const isSelected =
+                  selectedIds.has(
                     candidate.id
                   );
 
                 return (
                   <article
-                    key={candidate.id}
+                    key={
+                      candidate.id
+                    }
                     className={`rounded-2xl border bg-white p-6 shadow-sm transition ${
-                      selected
+                      isSelected
                         ? "border-blue-400 ring-2 ring-blue-100"
                         : "border-slate-200"
                     }`}
                   >
+
                     <div className="flex flex-col gap-5 lg:flex-row lg:justify-between">
+
                       <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          {selectable && (
-                            <button
-                              type="button"
-                              onClick={() =>
+
+                        <div className="flex items-start gap-3">
+
+                          {/* Selection checkbox */}
+
+                          {isSelectable && (
+                            <input
+                              type="checkbox"
+                              checked={
+                                isSelected
+                              }
+                              disabled={
+                                candidate.ai_review_status ===
+                                "reviewing"
+                              }
+                              onChange={() =>
                                 toggleCandidateSelection(
                                   candidate.id
                                 )
                               }
-                              disabled={
-                                batchReviewing
-                              }
-                              className={`flex h-5 w-5 items-center justify-center rounded border text-xs font-bold ${
-                                selected
-                                  ? "border-blue-600 bg-blue-600 text-white"
-                                  : "border-slate-300 bg-white text-transparent"
-                              }`}
-                              aria-label={
-                                selected
-                                  ? "Deselect candidate"
-                                  : "Select candidate"
-                              }
-                            >
-                              ✓
-                            </button>
+                              className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                            />
                           )}
 
-                          <span
-                            className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                              statusStyles[
-                                candidate.status
-                              ] ??
-                              statusStyles.pending
-                            }`}
-                          >
-                            {candidate.status}
-                          </span>
+                          <div className="min-w-0 flex-1">
 
-                          {isNew && (
-                            <span className="rounded-full bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white">
-                              NEW
-                            </span>
-                          )}
+                            <div className="flex flex-wrap items-center gap-2">
 
-                          {candidate.relevance_score !==
-                            null && (
-                            <span className="text-xs font-medium text-slate-400">
-                              Relevance{" "}
-                              {
-                                candidate.relevance_score
-                              }
-                              /100
-                            </span>
-                          )}
-
-                          {candidate.ai_review_status ===
-                            "completed" && (
-                            <>
-                              <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
-                                AI{" "}
+                              <span
+                                className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                  statusStyles[
+                                    candidate
+                                      .status
+                                  ] ??
+                                  statusStyles.pending
+                                }`}
+                              >
                                 {
-                                  candidate.ai_confidence ??
-                                  0
+                                  candidate.status
                                 }
-                                %
                               </span>
 
-                              {candidate.ai_recommendation ===
-                                "publish" && (
-                                <span className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700">
-                                  AI: Strong
+                              {isNew && (
+                                <span className="rounded-full bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white">
+                                  NEW
                                 </span>
                               )}
 
-                              {candidate.ai_recommendation ===
-                                "review" && (
+                              {candidate.relevance_score !==
+                                null && (
+                                <span className="text-xs font-medium text-slate-400">
+                                  Relevance{" "}
+                                  {
+                                    candidate.relevance_score
+                                  }
+                                  /100
+                                </span>
+                              )}
+
+                              {/* AI status */}
+
+                              {candidate.ai_review_status ===
+                                "reviewing" && (
                                 <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2.5 py-1 text-xs font-semibold text-yellow-700">
-                                  AI: Review
+                                  AI Reviewing
                                 </span>
                               )}
 
-                              {candidate.ai_recommendation ===
-                                "reject" && (
+                              {candidate.ai_review_status ===
+                                "failed" && (
                                 <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
-                                  AI: Reject
+                                  AI Failed
                                 </span>
                               )}
-                            </>
-                          )}
 
-                          {candidate.ai_review_status ===
-                            "reviewing" && (
-                            <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2.5 py-1 text-xs font-semibold text-yellow-700">
-                              AI Reviewing
-                            </span>
-                          )}
+                              {candidate.ai_review_status ===
+                                "completed" && (
+                                <>
+                                  <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-600">
+                                    AI{" "}
+                                    {
+                                      candidate.ai_confidence ??
+                                      0
+                                    }
+                                    %
+                                  </span>
 
-                          {candidate.ai_review_status ===
-                            "failed" && (
-                            <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
-                              AI Failed
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 className="mt-3 text-lg font-bold text-slate-950">
-                          {candidate.title}
-                        </h3>
-
-                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
-                          {candidate.source_name && (
-                            <span>
-                              {
-                                candidate.source_name
-                              }
-                            </span>
-                          )}
-
-                          <span>
-                            Discovered{" "}
-                            {new Date(
-                              candidate.discovered_at
-                            ).toLocaleString()}
-                          </span>
-
-                          {candidate.published_at && (
-                            <span>
-                              Published{" "}
-                              {new Date(
-                                candidate.published_at
-                              ).toLocaleDateString()}
-                            </span>
-                          )}
-                        </div>
-
-                        {candidate.summary && (
-                          <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-600">
-                            {
-                              candidate.summary
-                            }
-                          </p>
-                        )}
-
-                        {/* AI recommendation summary */}
-
-                        {candidate.ai_review_status ===
-                          "completed" && (
-                          <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div>
-                                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                                  AI assessment
-                                </div>
-
-                                <div className="mt-1 font-semibold text-slate-900">
                                   {candidate.ai_recommendation ===
-                                  "publish"
-                                    ? "Strong incident candidate"
-                                    : candidate.ai_recommendation ===
-                                      "review"
-                                    ? "Needs editorial review"
-                                    : "Likely not a Frontier incident"}
-                                </div>
-                              </div>
+                                    "publish" && (
+                                    <span className="rounded-full border border-green-200 bg-green-50 px-2.5 py-1 text-xs font-semibold text-green-700">
+                                      AI: Strong
+                                    </span>
+                                  )}
 
-                              <div className="flex flex-wrap gap-2">
-                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                  Confidence{" "}
-                                  {
-                                    candidate.ai_confidence ??
-                                    0
-                                  }
-                                  %
-                                </span>
+                                  {candidate.ai_recommendation ===
+                                    "review" && (
+                                    <span className="rounded-full border border-yellow-200 bg-yellow-50 px-2.5 py-1 text-xs font-semibold text-yellow-700">
+                                      AI: Review
+                                    </span>
+                                  )}
 
-                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-600">
-                                  Evidence{" "}
+                                  {candidate.ai_recommendation ===
+                                    "reject" && (
+                                    <span className="rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700">
+                                      AI: Reject
+                                    </span>
+                                  )}
+                                </>
+                              )}
+
+                            </div>
+
+                            <h3 className="mt-3 text-lg font-bold text-slate-950">
+                              {
+                                candidate.title
+                              }
+                            </h3>
+
+                            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
+
+                              {candidate.source_name && (
+                                <span>
                                   {
-                                    candidate.ai_evidence_quality ??
-                                    0
+                                    candidate.source_name
                                   }
-                                  %
                                 </span>
+                              )}
+
+                              <span>
+                                Discovered{" "}
+                                {new Date(
+                                  candidate.discovered_at
+                                ).toLocaleString()}
+                              </span>
+
+                              {candidate.published_at && (
+                                <span>
+                                  Published{" "}
+                                  {new Date(
+                                    candidate.published_at
+                                  ).toLocaleDateString()}
+                                </span>
+                              )}
+
+                            </div>
+
+                            {/* AI metadata */}
+
+                            {candidate.ai_review_status ===
+                              "completed" && (
+                              <div className="mt-4 flex flex-wrap gap-2">
 
                                 {candidate.ai_severity && (
                                   <span
-                                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${
+                                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${
                                       severityStyles[
-                                        candidate.ai_severity
+                                        candidate
+                                          .ai_severity
                                       ] ??
                                       "bg-slate-50 text-slate-600 border-slate-200"
                                     }`}
@@ -1784,48 +2048,74 @@ export default function CandidatesDashboard({
                                     }
                                   </span>
                                 )}
-                              </div>
-                            </div>
 
-                            {candidate.ai_incident_summary && (
-                              <p className="mt-3 text-sm leading-6 text-slate-600">
+                                {candidate.ai_category && (
+                                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                    {
+                                      candidate.ai_category
+                                    }
+                                  </span>
+                                )}
+
+                                {candidate.ai_evidence_quality !==
+                                  null && (
+                                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
+                                    Evidence{" "}
+                                    {
+                                      candidate.ai_evidence_quality
+                                    }
+                                    %
+                                  </span>
+                                )}
+
+                              </div>
+                            )}
+
+                            {candidate.summary && (
+                              <p className="mt-4 max-w-3xl text-sm leading-6 text-slate-600">
                                 {
-                                  candidate.ai_incident_summary
+                                  candidate.summary
                                 }
                               </p>
                             )}
-                          </div>
-                        )}
 
-                        {candidate.matched_keywords &&
-                          candidate
-                            .matched_keywords
-                            .length >
-                            0 && (
-                            <div className="mt-4 flex flex-wrap gap-2">
-                              {candidate.matched_keywords.map(
-                                (
-                                  keyword
-                                ) => (
-                                  <span
-                                    key={
+                            {candidate.matched_keywords &&
+                              candidate
+                                .matched_keywords
+                                .length >
+                                0 && (
+                                <div className="mt-4 flex flex-wrap gap-2">
+
+                                  {candidate.matched_keywords.map(
+                                    (
                                       keyword
-                                    }
-                                    className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-500"
-                                  >
-                                    {
-                                      keyword
-                                    }
-                                  </span>
-                                )
+                                    ) => (
+                                      <span
+                                        key={
+                                          keyword
+                                        }
+                                        className="rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-500"
+                                      >
+                                        {
+                                          keyword
+                                        }
+                                      </span>
+                                    )
+                                  )}
+
+                                </div>
                               )}
-                            </div>
-                          )}
+
+                          </div>
+
+                        </div>
+
                       </div>
 
                       {/* Actions */}
 
                       <div className="flex shrink-0 flex-col gap-2 lg:w-40">
+
                         <a
                           href={
                             candidate.article_url
@@ -1841,12 +2131,12 @@ export default function CandidatesDashboard({
                           "pending" ||
                           candidate.status ===
                             "reviewing") && (
-                          <>
+                          <div className="flex flex-col gap-2">
+
                             <button
                               onClick={() =>
                                 runAIReview(
-                                  candidate,
-                                  true
+                                  candidate
                                 )
                               }
                               disabled={
@@ -1877,7 +2167,8 @@ export default function CandidatesDashboard({
                             >
                               Manual Review
                             </button>
-                          </>
+
+                          </div>
                         )}
 
                         {candidate.status ===
@@ -1910,23 +2201,35 @@ export default function CandidatesDashboard({
                         >
                           Delete
                         </button>
+
                       </div>
+
                     </div>
+
                   </article>
                 );
               }
             )
+
           )}
+
         </div>
+
       </main>
 
-      {/* Review modal */}
+      {/* -------------------------------------------------------
+          Review modal
+          ------------------------------------------------------- */}
 
       {reviewingCandidate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+
           <div className="max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
             <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+
               <div>
+
                 <div className="text-xs font-bold uppercase tracking-wider text-blue-600">
                   Candidate review
                 </div>
@@ -1934,14 +2237,18 @@ export default function CandidatesDashboard({
                 <h2 className="mt-1 text-xl font-bold text-slate-950">
                   Review incident
                 </h2>
+
               </div>
 
               <button
-                onClick={closeReview}
+                onClick={
+                  closeReview
+                }
                 className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
               >
                 ✕
               </button>
+
             </div>
 
             <form
@@ -1950,16 +2257,19 @@ export default function CandidatesDashboard({
               }
               className="space-y-5 p-6"
             >
+
               {/* AI Assessment */}
 
               {reviewingCandidate.ai_review_status ===
                 "completed" && (
                 <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5">
+
                   <div className="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">
                     Automated AI assessment
                   </div>
 
                   <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+
                     <div className="text-lg font-bold text-slate-950">
                       {reviewingCandidate.ai_recommendation ===
                       "publish"
@@ -1971,6 +2281,7 @@ export default function CandidatesDashboard({
                     </div>
 
                     <div className="flex flex-wrap gap-2">
+
                       <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700">
                         Confidence:{" "}
                         {
@@ -1988,11 +2299,15 @@ export default function CandidatesDashboard({
                         }
                         %
                       </span>
+
                     </div>
+
                   </div>
 
                   <div className="mt-5 grid gap-4 md:grid-cols-2">
+
                     <div>
+
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Intended behavior
                       </div>
@@ -2001,9 +2316,11 @@ export default function CandidatesDashboard({
                         {reviewingCandidate.ai_intended_behavior ||
                           "Not established from the available evidence."}
                       </p>
+
                     </div>
 
                     <div>
+
                       <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                         Observed behavior
                       </div>
@@ -2012,10 +2329,13 @@ export default function CandidatesDashboard({
                         {reviewingCandidate.ai_observed_behavior ||
                           "Not established from the available evidence."}
                       </p>
+
                     </div>
+
                   </div>
 
                   <div className="mt-4">
+
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Why it may qualify
                     </div>
@@ -2024,9 +2344,11 @@ export default function CandidatesDashboard({
                       {reviewingCandidate.ai_scope_violation ||
                         "The AI reviewer could not establish a clear scope violation."}
                     </p>
+
                   </div>
 
                   <div className="mt-4">
+
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       Evidence assessment
                     </div>
@@ -2035,9 +2357,11 @@ export default function CandidatesDashboard({
                       {reviewingCandidate.ai_evidence_summary ||
                         "No evidence assessment available."}
                     </p>
+
                   </div>
 
                   <div className="mt-4">
+
                     <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
                       AI reasoning
                     </div>
@@ -2046,86 +2370,16 @@ export default function CandidatesDashboard({
                       {reviewingCandidate.ai_reasoning ||
                         "No reasoning available."}
                     </p>
+
                   </div>
 
-                  {reviewingCandidate.ai_additional_sources &&
-                    Array.isArray(
-                      reviewingCandidate.ai_additional_sources
-                    ) &&
-                    reviewingCandidate
-                      .ai_additional_sources
-                      .length >
-                      0 && (
-                      <div className="mt-4">
-                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          Additional sources
-                        </div>
-
-                        <div className="mt-2 space-y-2">
-                          {reviewingCandidate.ai_additional_sources.map(
-                            (
-                              source,
-                              index
-                            ) => {
-                              if (
-                                typeof source !==
-                                "object" ||
-                                source ===
-                                  null ||
-                                !(
-                                  "url" in
-                                  source
-                                )
-                              ) {
-                                return null;
-                              }
-
-                              const sourceRecord =
-                                source as {
-                                  name?: string;
-                                  url?: string;
-                                  relevance?: string;
-                                };
-
-                              return (
-                                <a
-                                  key={
-                                    `${sourceRecord.url}-${index}`
-                                  }
-                                  href={
-                                    sourceRecord.url
-                                  }
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="block rounded-lg border border-slate-200 bg-white p-3 hover:bg-slate-50"
-                                >
-                                  <div className="text-sm font-semibold text-blue-600">
-                                    {
-                                      sourceRecord.name ||
-                                      sourceRecord.url
-                                    }
-                                  </div>
-
-                                  {sourceRecord.relevance && (
-                                    <div className="mt-1 text-xs leading-5 text-slate-500">
-                                      {
-                                        sourceRecord.relevance
-                                      }
-                                    </div>
-                                  )}
-                                </a>
-                              );
-                            }
-                          )}
-                        </div>
-                      </div>
-                    )}
                 </div>
               )}
 
               {/* Source */}
 
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+
                 <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">
                   Discovered source
                 </p>
@@ -2152,6 +2406,7 @@ export default function CandidatesDashboard({
                 >
                   Open original article ↗
                 </a>
+
               </div>
 
               {/* Title */}
@@ -2168,7 +2423,8 @@ export default function CandidatesDashboard({
                   onChange={(event) =>
                     updateForm(
                       "title",
-                      event.target.value
+                      event.target
+                        .value
                     )
                   }
                   className="input"
@@ -2178,6 +2434,7 @@ export default function CandidatesDashboard({
               {/* Company / model */}
 
               <div className="grid gap-5 sm:grid-cols-2">
+
                 <Field
                   label="Company / organization"
                   required
@@ -2190,7 +2447,8 @@ export default function CandidatesDashboard({
                     onChange={(event) =>
                       updateForm(
                         "company",
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     placeholder="OpenAI"
@@ -2199,6 +2457,7 @@ export default function CandidatesDashboard({
                 </Field>
 
                 <Field label="Model">
+
                   <input
                     value={
                       reviewForm.model
@@ -2206,18 +2465,22 @@ export default function CandidatesDashboard({
                     onChange={(event) =>
                       updateForm(
                         "model",
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     placeholder="GPT-5"
                     className="input"
                   />
+
                 </Field>
+
               </div>
 
               {/* Severity / category */}
 
               <div className="grid gap-5 sm:grid-cols-2">
+
                 <Field
                   label="Severity"
                   required
@@ -2229,7 +2492,8 @@ export default function CandidatesDashboard({
                     onChange={(event) =>
                       updateForm(
                         "severity",
-                        event.target.value
+                        event.target
+                          .value
                       )
                     }
                     className="input"
@@ -2253,7 +2517,9 @@ export default function CandidatesDashboard({
                 </Field>
 
                 <Field label="Category">
+
                   <div>
+
                     <label className="text-sm font-semibold text-slate-700">
                       Category
                     </label>
@@ -2264,11 +2530,12 @@ export default function CandidatesDashboard({
                         reviewForm.category
                       }
                       onChange={(event) =>
-                        updateForm(
-                          "category",
-                          event.target
-                            .value
-                        )
+                        setReviewForm({
+                          ...reviewForm,
+                          category:
+                            event.target
+                              .value,
+                        })
                       }
                       placeholder="Select or enter a category..."
                       className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-blue-500"
@@ -2292,13 +2559,17 @@ export default function CandidatesDashboard({
                     <p className="mt-2 text-xs text-slate-400">
                       Choose a suggested category or enter a new one.
                     </p>
+
                   </div>
+
                 </Field>
+
               </div>
 
               {/* Occurred */}
 
               <Field label="Occurred date">
+
                 <input
                   type="date"
                   value={
@@ -2307,11 +2578,13 @@ export default function CandidatesDashboard({
                   onChange={(event) =>
                     updateForm(
                       "occurredAt",
-                      event.target.value
+                      event.target
+                        .value
                     )
                   }
                   className="input"
                 />
+
               </Field>
 
               {/* Summary */}
@@ -2320,6 +2593,7 @@ export default function CandidatesDashboard({
                 label="Summary"
                 required
               >
+
                 <textarea
                   required
                   rows={4}
@@ -2329,12 +2603,14 @@ export default function CandidatesDashboard({
                   onChange={(event) =>
                     updateForm(
                       "summary",
-                      event.target.value
+                      event.target
+                        .value
                     )
                   }
                   className="input resize-none"
                   placeholder="Briefly summarize the incident."
                 />
+
               </Field>
 
               {/* Description */}
@@ -2343,6 +2619,7 @@ export default function CandidatesDashboard({
                 label="Description"
                 required
               >
+
                 <textarea
                   required
                   rows={7}
@@ -2352,28 +2629,32 @@ export default function CandidatesDashboard({
                   onChange={(event) =>
                     updateForm(
                       "description",
-                      event.target.value
+                      event.target
+                        .value
                     )
                   }
                   className="input resize-none"
                   placeholder="Describe what happened, what the AI system did, and why it was outside the intended behavior."
                 />
+
               </Field>
 
               {/* Actions */}
 
               <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-between">
+
                 <button
                   type="button"
-                  onClick={
-                    closeReview
-                  }
+                  onClick={() => {
+                    closeReview();
+                  }}
                   className="rounded-xl border border-red-200 px-5 py-3 text-sm font-semibold text-red-600 hover:bg-red-50"
                 >
                   Cancel
                 </button>
 
                 <div className="flex gap-3">
+
                   <button
                     type="button"
                     disabled={
@@ -2386,6 +2667,8 @@ export default function CandidatesDashboard({
                         rejectCandidate(
                           reviewingCandidate
                         );
+
+                        closeReview();
                       }
                     }}
                     className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -2404,15 +2687,27 @@ export default function CandidatesDashboard({
                       ? "Publishing..."
                       : "Publish incident"}
                   </button>
+
                 </div>
+
               </div>
+
             </form>
+
           </div>
+
         </div>
       )}
+
     </div>
   );
 }
+
+/*
+ * ------------------------------------------------------------
+ * Candidate stat
+ * ------------------------------------------------------------
+ */
 
 function CandidateStat({
   label,
@@ -2443,6 +2738,7 @@ function CandidateStat({
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-4">
+
       <p className="text-xs font-medium uppercase tracking-wider text-slate-400">
         {label}
       </p>
@@ -2452,9 +2748,16 @@ function CandidateStat({
       >
         {value}
       </p>
+
     </div>
   );
 }
+
+/*
+ * ------------------------------------------------------------
+ * Form field
+ * ------------------------------------------------------------
+ */
 
 function Field({
   label,
@@ -2467,7 +2770,9 @@ function Field({
 }) {
   return (
     <div>
+
       <label className="text-sm font-semibold text-slate-700">
+
         {label}
 
         {required && (
@@ -2475,11 +2780,13 @@ function Field({
             *
           </span>
         )}
+
       </label>
 
       <div className="mt-2">
         {children}
       </div>
+
     </div>
   );
 }
