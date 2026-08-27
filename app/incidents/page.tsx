@@ -61,10 +61,24 @@ export default async function IncidentsPage() {
 
           <nav className="flex items-center gap-6 text-sm">
             <Link
+              href="/"
+              className="text-slate-400 transition hover:text-white"
+            >
+              Home
+            </Link>
+            
+            <Link
               href="/incidents"
               className="font-semibold text-white"
             >
               Incidents
+            </Link>
+
+            <Link
+              href="/ai_news"
+              className="text-slate-400 transition hover:text-white"
+            >
+              AI News
             </Link>
 
             <Link
@@ -202,6 +216,13 @@ export default async function IncidentsPage() {
               className="transition hover:text-white"
             >
               Incidents
+            </Link>
+
+            <Link
+              href="/ai_news"
+              className="transition hover:text-white"
+            >
+              AI News
             </Link>
 
             <Link

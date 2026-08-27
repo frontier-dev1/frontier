@@ -62,12 +62,25 @@ export default async function HomePage() {
           </Link>
 
           <nav className="flex items-center gap-8 text-sm font-medium">
+            <Link
+              href="/"
+              className="font-semibold text-white"
+            >
+              Home
+            </Link>
 
             <Link
               href="/incidents"
               className="text-slate-300 transition hover:text-white"
             >
               Incidents
+            </Link>
+
+            <Link
+              href="/ai_news"
+              className="text-slate-300 transition hover:text-white"
+            >
+              AI News
             </Link>
 
             <Link
@@ -383,7 +396,12 @@ export default async function HomePage() {
           </div>
 
           <div className="flex gap-6 text-sm text-slate-500">
-
+            <Link
+              href="/"
+              className="text-slate-400 transition hover:text-white"
+            >
+              Home
+            </Link>
             <Link
               href="/incidents"
               className="transition hover:text-slate-300"
@@ -391,11 +409,15 @@ export default async function HomePage() {
               Incidents
             </Link>
 
+            <Link href="/ai_news">
+              AI News
+            </Link>
+
             <Link
               href="/about"
               className="transition hover:text-slate-300"
             >
-              About
+              About 
             </Link>
 
           </div>

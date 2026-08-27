@@ -29,6 +29,90 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_news: {
+        Row: {
+          ai_category: string | null
+          ai_company: string | null
+          ai_importance: string | null
+          ai_model: string | null
+          ai_reasoning: string | null
+          ai_relevance_score: number | null
+          ai_reviewed_at: string | null
+          ai_summary: string | null
+          article_fetch_status: string
+          article_text: string | null
+          article_text_fetched_at: string | null
+          article_text_length: number
+          article_text_source: string | null
+          article_url: string | null
+          category: string | null
+          created_at: string
+          discovered_at: string
+          id: string
+          image_url: string | null
+          published_at: string | null
+          source_name: string
+          source_url: string
+          summary: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          ai_category?: string | null
+          ai_company?: string | null
+          ai_importance?: string | null
+          ai_model?: string | null
+          ai_reasoning?: string | null
+          ai_relevance_score?: number | null
+          ai_reviewed_at?: string | null
+          ai_summary?: string | null
+          article_fetch_status?: string
+          article_text?: string | null
+          article_text_fetched_at?: string | null
+          article_text_length?: number
+          article_text_source?: string | null
+          article_url?: string | null
+          category?: string | null
+          created_at?: string
+          discovered_at?: string
+          id?: string
+          image_url?: string | null
+          published_at?: string | null
+          source_name: string
+          source_url: string
+          summary?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          ai_category?: string | null
+          ai_company?: string | null
+          ai_importance?: string | null
+          ai_model?: string | null
+          ai_reasoning?: string | null
+          ai_relevance_score?: number | null
+          ai_reviewed_at?: string | null
+          ai_summary?: string | null
+          article_fetch_status?: string
+          article_text?: string | null
+          article_text_fetched_at?: string | null
+          article_text_length?: number
+          article_text_source?: string | null
+          article_url?: string | null
+          category?: string | null
+          created_at?: string
+          discovered_at?: string
+          id?: string
+          image_url?: string | null
+          published_at?: string | null
+          source_name?: string
+          source_url?: string
+          summary?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       discovery_runs: {
         Row: {
           completed_at: string | null
