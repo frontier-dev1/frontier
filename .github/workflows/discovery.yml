@@ -2,7 +2,7 @@ name: Frontier Discovery
 
 on:
   schedule:
-    - cron: "0 */1 * * *"
+    - cron: "0 * * * *"
 
   workflow_dispatch:
 
@@ -11,10 +11,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Run Frontier discovery
+
+      # -------------------------------------------------------
+      # Incident discovery
+      # -------------------------------------------------------
+
+      - name: Run Frontier incident discovery
         run: |
           curl --fail-with-body \
             -X POST \
             -H "Authorization: Bearer ${{ secrets.FRONTIER_CRON_SECRET }}" \
             -H "Content-Type: application/json" \
             https://frontier-eight.vercel.app/api/discovery/run
+
+      # -------------------------------------------------------
+      # AI news discovery
+      # -------------------------------------------------------
+
+      - name: Run Frontier AI news discovery
+        run: |
+          curl --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.FRONTIER_CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            https://frontier-eight.vercel.app/api/news/discover

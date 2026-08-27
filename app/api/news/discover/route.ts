@@ -24,9 +24,64 @@ const MAX_AI_REVIEWS = 20;
  */
 const MIN_RELEVANCE_SCORE = 60;
 
-export async function POST() {
+export async function POST(
+  request: Request
+) {
   try {
-    const supabase = createAdminClient();
+    /*
+     * ---------------------------------------------------------
+     * 1. Authentication
+     * ---------------------------------------------------------
+     *
+     * Automated GitHub Actions requests use the cron secret.
+     *
+     * Manual requests can be made by authenticated admins.
+     * ---------------------------------------------------------
+     */
+
+    const cronSecret =
+      process.env.FRONTIER_CRON_SECRET;
+
+    const authorization =
+      request.headers.get(
+        "authorization"
+      );
+
+    const providedSecret =
+      authorization?.startsWith(
+        "Bearer "
+      )
+        ? authorization.slice(7)
+        : null;
+
+    const isAutomatedRequest =
+      Boolean(
+        cronSecret &&
+          providedSecret &&
+          providedSecret ===
+            cronSecret
+      );
+
+    if (!isAutomatedRequest) {
+      return NextResponse.json(
+        {
+          error:
+            "Unauthorized.",
+        },
+        {
+          status: 401,
+        }
+      );
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * Create service-role Supabase client
+     * ---------------------------------------------------------
+     */
+
+    const supabase =
+      createAdminClient();
 
     /*
      * ---------------------------------------------------------
