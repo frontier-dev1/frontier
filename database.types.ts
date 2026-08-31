@@ -10,7 +10,7 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.15"
+    PostgrestVersion: "14.17"
   }
   public: {
     Tables: {
@@ -107,6 +107,105 @@ export type Database = {
           published_at?: string | null
           source_name?: string
           source_url?: string
+          summary?: string | null
+          title?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      ai_news_candidates: {
+        Row: {
+          ai_category: string | null
+          ai_company: string | null
+          ai_importance: string | null
+          ai_is_relevant: boolean | null
+          ai_model: string | null
+          ai_reasoning: string | null
+          ai_relevance_score: number | null
+          ai_review_status: string
+          ai_reviewed_at: string | null
+          ai_summary: string | null
+          ai_title: string | null
+          article_fetch_status: string
+          article_text: string | null
+          article_text_fetched_at: string | null
+          article_text_length: number
+          article_text_source: string | null
+          article_url: string
+          created_at: string
+          discovered_at: string
+          id: string
+          image_url: string | null
+          matched_keywords: string[]
+          published_at: string | null
+          relevance_score: number | null
+          source_name: string
+          source_url: string
+          status: string
+          summary: string | null
+          title: string
+          updated_at: string
+        }
+        Insert: {
+          ai_category?: string | null
+          ai_company?: string | null
+          ai_importance?: string | null
+          ai_is_relevant?: boolean | null
+          ai_model?: string | null
+          ai_reasoning?: string | null
+          ai_relevance_score?: number | null
+          ai_review_status?: string
+          ai_reviewed_at?: string | null
+          ai_summary?: string | null
+          ai_title?: string | null
+          article_fetch_status?: string
+          article_text?: string | null
+          article_text_fetched_at?: string | null
+          article_text_length?: number
+          article_text_source?: string | null
+          article_url: string
+          created_at?: string
+          discovered_at?: string
+          id?: string
+          image_url?: string | null
+          matched_keywords?: string[]
+          published_at?: string | null
+          relevance_score?: number | null
+          source_name: string
+          source_url: string
+          status?: string
+          summary?: string | null
+          title: string
+          updated_at?: string
+        }
+        Update: {
+          ai_category?: string | null
+          ai_company?: string | null
+          ai_importance?: string | null
+          ai_is_relevant?: boolean | null
+          ai_model?: string | null
+          ai_reasoning?: string | null
+          ai_relevance_score?: number | null
+          ai_review_status?: string
+          ai_reviewed_at?: string | null
+          ai_summary?: string | null
+          ai_title?: string | null
+          article_fetch_status?: string
+          article_text?: string | null
+          article_text_fetched_at?: string | null
+          article_text_length?: number
+          article_text_source?: string | null
+          article_url?: string
+          created_at?: string
+          discovered_at?: string
+          id?: string
+          image_url?: string | null
+          matched_keywords?: string[]
+          published_at?: string | null
+          relevance_score?: number | null
+          source_name?: string
+          source_url?: string
+          status?: string
           summary?: string | null
           title?: string
           updated_at?: string

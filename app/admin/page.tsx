@@ -126,7 +126,11 @@ export default async function AdminPage() {
           </AdminNavLink>
 
           <AdminNavLink href="/admin/candidates">
-            Candidates
+            Incident Candidates
+          </AdminNavLink>
+
+          <AdminNavLink href="/admin/news-candidates">
+            News Candidates
           </AdminNavLink>
 
           <AdminNavLink href="/admin/discovery">

@@ -535,6 +535,41 @@ export default function CandidatesDashboard({
     }
   }
 
+  async function runNewsDiscovery() {
+  setRunningDiscovery(true);
+  setDiscoveryMessage("");
+
+  try {
+    const response = await fetch(
+      "/api/news/discovery/run",
+      {
+        method: "POST",
+      }
+    );
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        result.error ||
+          "News discovery failed."
+      );
+    }
+
+    setDiscoveryMessage(
+      `News discovery complete — discovered ${result.discovered}, reviewed ${result.reviewed}, published ${result.published}, rejected ${result.rejected}, duplicates ${result.duplicates}, failed ${result.failed}.`
+    );
+  } catch (error) {
+    setDiscoveryMessage(
+      error instanceof Error
+        ? error.message
+        : "News discovery failed."
+    );
+  } finally {
+    setRunningDiscovery(false);
+  }
+}
+
   /*
    * ------------------------------------------------------------
    * Individual AI review
@@ -1342,11 +1377,21 @@ export default function CandidatesDashboard({
           <button
             onClick={runDiscovery}
             disabled={runningDiscovery}
-            className="shrink-0 rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             {runningDiscovery
               ? "Scanning..."
-              : "Run discovery"}
+              : "Run Incident Discovery"}
+          </button>
+
+          <button
+            onClick={runNewsDiscovery}
+            disabled={runningDiscovery}
+            className="rounded-xl bg-purple-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-purple-500 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {runningDiscovery
+              ? "Scanning news..."
+              : "Run News Discovery"}
           </button>
 
         </div>
