@@ -1,16 +1,112 @@
 import Parser from "rss-parser";
 
+/*
+ * ============================================================
+ * Frontier AI News Discovery Scraper
+ * ============================================================
+ *
+ * Architecture:
+ *
+ *   Direct publisher RSS
+ *          ↓
+ *   Publisher article URL
+ *          ↓
+ *   Fetch article HTML
+ *          ↓
+ *   Extract article text
+ *          ↓
+ *   Quality check
+ *          ↓
+ *   Candidate
+ *          ↓
+ *   Gemini editorial review
+ *
+ * IMPORTANT:
+ *
+ * Google News is NOT used as the primary discovery source.
+ *
+ * Google News RSS URLs frequently return wrapper URLs and
+ * Google News boilerplate instead of the actual article.
+ * ============================================================
+ */
+
+/*
+ * ============================================================
+ * Configuration
+ * ============================================================
+ */
+
+const USER_AGENT =
+  "Mozilla/5.0 (compatible; Frontier AI News Research Bot/1.0; +https://frontier-eight.vercel.app/)";
+
+const MAX_ARTICLE_LENGTH = 50000;
+
+const MIN_ARTICLE_LENGTH = 500;
+
+const FETCH_TIMEOUT_MS = 15000;
+
+/*
+ * ============================================================
+ * RSS parser
+ * ============================================================
+ */
+
+const parser = new Parser({
+  timeout: FETCH_TIMEOUT_MS,
+});
+
+/*
+ * ============================================================
+ * Types
+ * ============================================================
+ */
+
 type FeedItem = {
   title?: string;
   link?: string;
   pubDate?: string;
   isoDate?: string;
+
   contentSnippet?: string;
   content?: string;
+  contentEncoded?: string;
+
   creator?: string;
-  source?: {
-    name?: string;
-  };
+  author?: string;
+
+  categories?: string[];
+
+  guid?: string;
+};
+
+type FeedSource = {
+  name: string;
+  url: string;
+};
+
+export type ArticleFetchResult = {
+  text: string | null;
+
+  source:
+    | "json_ld"
+    | "article"
+    | "main"
+    | "paragraphs"
+    | "html"
+    | "meta"
+    | "rss"
+    | null;
+
+  status:
+    | "success"
+    | "partial"
+    | "failed";
+
+  fetchedAt: string;
+
+  length: number;
+
+  resolvedUrl: string | null;
 };
 
 export type DiscoveredNews = {
@@ -46,125 +142,224 @@ export type DiscoveredNews = {
   matched_keywords: string[];
 };
 
-const parser = new Parser();
-
 /*
- * ----------------------------------------------------------
- * RSS feeds
- * ----------------------------------------------------------
- *
- * These are intentionally broader than the incident feeds.
- *
- * The purpose of this scraper is to discover meaningful AI
- * news, not only AI safety incidents.
+ * ============================================================
+ * Direct publisher RSS feeds
+ * ============================================================
  */
 
-const NEWS_RSS_FEEDS = [
-  "https://news.google.com/rss/search?q=artificial+intelligence&hl=en-US&gl=US&ceid=US:en",
+const NEWS_RSS_FEEDS: FeedSource[] = [
+  {
+    name: "BBC",
+    url:
+      "https://feeds.bbci.co.uk/news/technology/rss.xml",
+  },
 
-  "https://news.google.com/rss/search?q=AI+models&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "Wired",
+    url:
+      "https://www.wired.com/feed/rss",
+  },
 
-  "https://news.google.com/rss/search?q=AI+agents&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "Ars Technica",
+    url:
+      "https://feeds.arstechnica.com/arstechnica/technology-lab",
+  },
 
-  "https://news.google.com/rss/search?q=generative+AI&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "MIT Technology Review",
+    url:
+      "https://www.technologyreview.com/feed/",
+  },
 
-  "https://news.google.com/rss/search?q=AI+research&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "TechCrunch AI",
+    url:
+      "https://techcrunch.com/category/artificial-intelligence/feed/",
+  },
 
-  "https://news.google.com/rss/search?q=AI+industry&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "VentureBeat AI",
+    url:
+      "https://venturebeat.com/category/ai/feed/",
+  },
 
-  "https://news.google.com/rss/search?q=AI+robotics&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "The Verge AI",
+    url:
+      "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml",
+  },
 
-  "https://news.google.com/rss/search?q=AI+chips&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "The Guardian Technology",
+    url:
+      "https://www.theguardian.com/technology/rss",
+  },
 
-  "https://news.google.com/rss/search?q=AI+regulation&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "Google AI Blog",
+    url:
+      "https://blog.google/technology/ai/rss/",
+  },
 
-  "https://news.google.com/rss/search?q=OpenAI+OR+Anthropic+OR+Google+AI&hl=en-US&gl=US&ceid=US:en",
+  {
+    name: "OpenAI",
+    url:
+      "https://openai.com/news/rss.xml",
+  },
 ];
 
 /*
- * ----------------------------------------------------------
- * Relevance keywords
- * ----------------------------------------------------------
+ * ============================================================
+ * Discovery keywords
+ * ============================================================
  *
- * This is only a lightweight discovery filter.
+ * This is intentionally only a discovery filter.
  *
- * Gemini will make the final editorial decision later.
+ * Gemini performs the actual editorial review.
+ * ============================================================
  */
 
 const KEYWORDS: Record<string, number> = {
   "artificial intelligence": 20,
   "artificial intelligence model": 20,
+
   "AI model": 15,
   "AI models": 15,
+
   "generative AI": 20,
+
   "AI agent": 20,
   "AI agents": 20,
 
   "machine learning": 10,
 
-  "OpenAI": 20,
-  "Anthropic": 20,
-  "Google AI": 20,
-  "Google DeepMind": 20,
-  "DeepMind": 20,
-  "Meta AI": 20,
-  "Microsoft AI": 20,
-  "xAI": 20,
-  "NVIDIA": 15,
-
-  "AI research": 15,
-  "AI safety": 20,
-  "AI regulation": 20,
-  "AI policy": 20,
-
   "large language model": 20,
   "language model": 15,
 
-  "robotics": 10,
+  "foundation model": 20,
+  "reasoning model": 20,
+  "multimodal model": 20,
+
+  "AI research": 15,
+
+  "AI safety": 20,
+  "AI security": 20,
+
+  "AI regulation": 20,
+  "AI policy": 20,
+
+  "artificial general intelligence": 25,
+
+  "autonomous agent": 20,
+  "autonomous agents": 20,
+
+  robotics: 10,
+
   "AI chip": 15,
   "AI chips": 15,
 
-  "benchmark": 10,
-  "reasoning model": 20,
-  "foundation model": 20,
+  "AI infrastructure": 15,
+  "AI accelerator": 15,
+
+  benchmark: 10,
+
+  OpenAI: 20,
+  Anthropic: 20,
+
+  "Google AI": 20,
+  "Google DeepMind": 20,
+  DeepMind: 20,
+
+  "Meta AI": 20,
+  "Microsoft AI": 20,
+
+  xAI: 20,
+  NVIDIA: 15,
+
+  Claude: 15,
+  GPT: 15,
+  Gemini: 15,
+  Llama: 15,
+  Mistral: 15,
+
+  funding: 8,
+  acquisition: 10,
+  acquired: 10,
+
+  "AI startup": 15,
+  "AI company": 15,
 };
 
 /*
- * ----------------------------------------------------------
+ * ============================================================
  * Trusted sources
- * ----------------------------------------------------------
+ * ============================================================
  */
 
 const TRUSTED_SOURCES = [
   "reuters.com",
   "apnews.com",
-  "wired.com",
-  "technologyreview.com",
-  "arstechnica.com",
-  "theguardian.com",
-  "nytimes.com",
-  "washingtonpost.com",
+
   "bbc.com",
   "bbc.co.uk",
+
+  "wired.com",
+
+  "technologyreview.com",
+
+  "arstechnica.com",
+
+  "techcrunch.com",
+
+  "venturebeat.com",
+
+  "theverge.com",
+
+  "theguardian.com",
+
+  "nytimes.com",
+
+  "washingtonpost.com",
+
   "cnn.com",
+
   "axios.com",
 
   "openai.com",
+
   "anthropic.com",
+
   "deepmind.google",
+
   "blog.google",
+
   "ai.meta.com",
+
   "microsoft.com",
+
   "nvidia.com",
 ];
 
 /*
- * ----------------------------------------------------------
- * Helpers
- * ----------------------------------------------------------
+ * ============================================================
+ * Google News boilerplate detection
+ * ============================================================
  */
 
-function getDomain(url: string): string {
+const GOOGLE_NEWS_BOILERPLATE =
+  "Comprehensive up-to-date news coverage, aggregated from sources all over the world by Google News.";
+
+/*
+ * ============================================================
+ * Helpers
+ * ============================================================
+ */
+
+function getDomain(
+  url: string
+): string {
   try {
     return new URL(url)
       .hostname
@@ -175,25 +370,57 @@ function getDomain(url: string): string {
   }
 }
 
-function isTrustedSource(url: string): boolean {
-  const domain = getDomain(url);
+function isTrustedSource(
+  url: string
+): boolean {
+  const domain =
+    getDomain(url);
 
   return TRUSTED_SOURCES.some(
     (trusted) =>
       domain === trusted ||
-      domain.endsWith(`.${trusted}`)
+      domain.endsWith(
+        `.${trusted}`
+      )
   );
 }
 
-function cleanText(text: string): string {
+function isGoogleNewsUrl(
+  url: string
+): boolean {
+  try {
+    const hostname =
+      new URL(url)
+        .hostname
+        .toLowerCase();
+
+    return (
+      hostname ===
+        "news.google.com" ||
+      hostname.endsWith(
+        ".news.google.com"
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+function cleanText(
+  text: string
+): string {
   return text
     .replace(/\r/g, "")
+    .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
-    .replace(/\n\s*\n\s*\n+/g, "\n\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
-function decodeHtmlEntities(text: string): string {
+function decodeHtmlEntities(
+  text: string
+): string {
   return text
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
@@ -201,29 +428,119 @@ function decodeHtmlEntities(text: string): string {
     .replace(/&#39;/gi, "'")
     .replace(/&apos;/gi, "'")
     .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">");
+    .replace(/&gt;/gi, ">")
+    .replace(
+      /&#(\d+);/g,
+      (_, code) => {
+        const number =
+          Number(code);
+
+        if (
+          Number.isNaN(number)
+        ) {
+          return _;
+        }
+
+        return String.fromCharCode(
+          number
+        );
+      }
+    );
+}
+
+function truncateText(
+  text: string,
+  maxCharacters: number
+): string {
+  if (
+    text.length <=
+    maxCharacters
+  ) {
+    return text;
+  }
+
+  return (
+    text.slice(
+      0,
+      maxCharacters
+    ) +
+    "\n\n[ARTICLE TEXT TRUNCATED]"
+  );
 }
 
 /*
- * ----------------------------------------------------------
+ * ============================================================
+ * Article text quality checks
+ * ============================================================
+ */
+
+function isGoogleNewsBoilerplate(
+  text: string
+): boolean {
+  return text
+    .toLowerCase()
+    .includes(
+      GOOGLE_NEWS_BOILERPLATE.toLowerCase()
+    );
+}
+
+function isUsableArticleText(
+  text: string | null
+): boolean {
+  if (!text) {
+    return false;
+  }
+
+  const cleaned =
+    cleanText(text);
+
+  if (
+    cleaned.length <
+    MIN_ARTICLE_LENGTH
+  ) {
+    return false;
+  }
+
+  if (
+    isGoogleNewsBoilerplate(
+      cleaned
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+/*
+ * ============================================================
  * Relevance scoring
- * ----------------------------------------------------------
+ * ============================================================
  */
 
 function calculateRelevance(
   title: string,
   summary: string | null
-) {
+): {
+  score: number;
+  matchedKeywords: string[];
+} {
   const text =
     `${title} ${summary ?? ""}`.toLowerCase();
 
   let score = 0;
 
-  const matchedKeywords: string[] = [];
+  const matchedKeywords: string[] =
+    [];
 
-  for (const [keyword, weight] of Object.entries(
-    KEYWORDS
-  )) {
+  for (
+    const [
+      keyword,
+      weight,
+    ] of Object.entries(
+      KEYWORDS
+    )
+  ) {
     if (
       text.includes(
         keyword.toLowerCase()
@@ -238,85 +555,130 @@ function calculateRelevance(
   }
 
   return {
-    score: Math.min(score, 100),
+    score: Math.min(
+      score,
+      100
+    ),
+
     matchedKeywords,
   };
 }
 
-/**
- * ----------------------------------------------------------
- * Google News URL detection
- * ----------------------------------------------------------
+/*
+ * ============================================================
+ * Published date
+ * ============================================================
  */
 
-function isGoogleNewsUrl(url: string): boolean {
-  try {
-    const hostname = new URL(url)
-      .hostname
-      .toLowerCase();
+function getPublishedAt(
+  item: FeedItem
+): string | null {
+  const rawDate =
+    item.isoDate ||
+    item.pubDate;
 
-    return (
-      hostname === "news.google.com" ||
-      hostname.endsWith(".news.google.com")
-    );
-  } catch {
-    return false;
+  if (!rawDate) {
+    return null;
   }
+
+  const date =
+    new Date(rawDate);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    return null;
+  }
+
+  return date.toISOString();
 }
 
-/**
- * ----------------------------------------------------------
- * Decode Google News RSS article URL
- * ----------------------------------------------------------
- *
- * Current Google News RSS feeds return URLs such as:
- *
- * https://news.google.com/rss/articles/CBMi...
- *
- * These are not normal HTTP redirects anymore.
- *
- * We have to ask Google's internal batchexecute endpoint
- * for the actual publisher URL.
- *
- * This is based on the current Google News URL resolution
- * mechanism used by several maintained open-source decoders.
+/*
+ * ============================================================
+ * RSS summary
+ * ============================================================
  */
 
-async function decodeGoogleNewsUrl(
-  googleUrl: string
-): Promise<string | null> {
-  try {
-    const parsed = new URL(
-      googleUrl
-    );
+function getFeedSummary(
+  item: FeedItem
+): string | null {
+  const candidates = [
+    item.contentSnippet,
+    item.contentEncoded,
+    item.content,
+  ];
 
-    const pathMatch =
-      parsed.pathname.match(
-        /\/(?:rss\/)?articles\/([^/?]+)/i
-      );
-
-    if (!pathMatch?.[1]) {
-      return null;
+  for (
+    const candidate of candidates
+  ) {
+    if (
+      typeof candidate !==
+      "string"
+    ) {
+      continue;
     }
 
-    const articleId =
-      pathMatch[1];
+    const cleaned =
+      cleanText(
+        htmlToText(
+          candidate
+        )
+      );
 
-    /*
-     * First fetch the Google News article page.
-     *
-     * Google embeds the parameters required by its
-     * batchexecute endpoint in the page.
-     */
+    if (
+      cleaned.length < 20
+    ) {
+      continue;
+    }
 
+    if (
+      isGoogleNewsBoilerplate(
+        cleaned
+      )
+    ) {
+      continue;
+    }
+
+    return cleaned;
+  }
+
+  return null;
+}
+
+/*
+ * ============================================================
+ * Fetch publisher article HTML
+ * ============================================================
+ */
+
+async function fetchHtml(
+  url: string
+): Promise<{
+  html: string;
+  finalUrl: string;
+} | null> {
+  if (
+    isGoogleNewsUrl(url)
+  ) {
+    console.warn(
+      `[NEWS FETCH] Refusing to fetch Google News wrapper: ${url}`
+    );
+
+    return null;
+  }
+
+  try {
     const response =
-      await fetch(googleUrl, {
+      await fetch(url, {
         method: "GET",
+
         redirect: "follow",
 
         headers: {
           "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136 Safari/537.36",
+            USER_AGENT,
 
           Accept:
             "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -326,12 +688,51 @@ async function decodeGoogleNewsUrl(
         },
 
         signal:
-          AbortSignal.timeout(10000),
+          AbortSignal.timeout(
+            FETCH_TIMEOUT_MS
+          ),
       });
 
-    if (!response.ok) {
+    const finalUrl =
+      response.url || url;
+
+    if (
+      !response.ok
+    ) {
       console.warn(
-        `Google News page returned ${response.status}: ${googleUrl}`
+        `[NEWS FETCH] HTTP ${response.status}: ${url}`
+      );
+
+      return null;
+    }
+
+    if (
+      isGoogleNewsUrl(
+        finalUrl
+      )
+    ) {
+      console.warn(
+        `[NEWS FETCH] Redirected to Google News, rejecting: ${url}`
+      );
+
+      return null;
+    }
+
+    const contentType =
+      response.headers.get(
+        "content-type"
+      ) || "";
+
+    if (
+      !contentType.includes(
+        "text/html"
+      ) &&
+      !contentType.includes(
+        "application/xhtml+xml"
+      )
+    ) {
+      console.warn(
+        `[NEWS FETCH] Not HTML (${contentType}): ${url}`
       );
 
       return null;
@@ -340,393 +741,24 @@ async function decodeGoogleNewsUrl(
     const html =
       await response.text();
 
-    /*
-     * ------------------------------------------------------
-     * Method 1: Current data-p format
-     * ------------------------------------------------------
-     */
-
-    const dataPMatch =
-      html.match(
-        /<c-wiz[^>]+data-p=["']([^"']+)["']/i
-      );
-
-    if (dataPMatch?.[1]) {
-      try {
-        const rawDataP =
-          dataPMatch[1]
-            .replace(
-              /&quot;/g,
-              '"'
-            )
-            .replace(
-              /&#39;/g,
-              "'"
-            )
-            .replace(
-              /&amp;/g,
-              "&"
-            );
-
-        /*
-         * Google uses a serialized structure beginning
-         * with %.@.
-         */
-
-        const normalized =
-          rawDataP.startsWith(
-            "%.@."
-          )
-            ? rawDataP.replace(
-                "%.@.",
-                "[\"garturlreq\","
-              ) + "]"
-            : rawDataP;
-
-        let parsedData: unknown;
-
-        try {
-          parsedData =
-            JSON.parse(
-              normalized
-            );
-        } catch {
-          /*
-           * Some versions return the serialized data
-           * with escaped quotes.
-           */
-
-          parsedData =
-            JSON.parse(
-              normalized.replace(
-                /\\"/g,
-                '"'
-              )
-            );
-        }
-
-        if (
-          Array.isArray(
-            parsedData
-          )
-        ) {
-          /*
-           * Google expects the request object without
-           * the final unused fields.
-           *
-           * The exact structure changes occasionally,
-           * so we preserve the Google-provided array
-           * and inject the article ID.
-           */
-
-          const requestData =
-            parsedData.slice();
-
-          /*
-           * Find the first nested array that can contain
-           * the article ID.
-           */
-
-          let replaced = false;
-
-          function replaceId(
-            value: unknown
-          ): unknown {
-            if (
-              Array.isArray(
-                value
-              )
-            ) {
-              return value.map(
-                (item) =>
-                  replaceId(
-                    item
-                  )
-              );
-            }
-
-            if (
-              typeof value ===
-                "string" &&
-              value ===
-                articleId
-            ) {
-              replaced = true;
-            }
-
-            return value;
-          }
-
-          replaceId(
-            requestData
-          );
-
-          /*
-           * If the Google page did not expose a usable
-           * request structure, fall through to Method 2.
-           */
-
-          if (replaced) {
-            const payload =
-              JSON.stringify([
-                [
-                  [
-                    "Fbv4je",
-                    JSON.stringify(
-                      requestData
-                    ),
-                    null,
-                    "generic",
-                  ],
-                ],
-              ]);
-
-            const batchResponse =
-              await fetch(
-                "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
-                {
-                  method: "POST",
-
-                  headers: {
-                    "Content-Type":
-                      "application/x-www-form-urlencoded;charset=UTF-8",
-
-                    "User-Agent":
-                      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136 Safari/537.36",
-
-                    Referer:
-                      "https://news.google.com/",
-                  },
-
-                  body:
-                    `f.req=${encodeURIComponent(
-                      payload
-                    )}`,
-
-                  signal:
-                    AbortSignal.timeout(
-                      10000
-                    ),
-                }
-              );
-
-            if (
-              batchResponse.ok
-            ) {
-              const batchText =
-                await batchResponse.text();
-
-              const decoded =
-                extractDecodedGoogleUrl(
-                  batchText
-                );
-
-              if (
-                decoded &&
-                !isGoogleNewsUrl(
-                  decoded
-                )
-              ) {
-                return decoded;
-              }
-            }
-          }
-        }
-      } catch (error) {
-        console.warn(
-          "Google News data-p decoder failed:",
-          error
-        );
-      }
-    }
-
-    /*
-     * ------------------------------------------------------
-     * Method 2: data-n-a-id / signature / timestamp
-     * ------------------------------------------------------
-     *
-     * Google has used this format in some versions of
-     * the article page.
-     */
-
-    const signatureMatch =
-      html.match(
-        /data-n-a-sg=["']([^"']+)["']/i
-      );
-
-    const timestampMatch =
-      html.match(
-        /data-n-a-ts=["']([^"']+)["']/i
-      );
-
-    const idMatch =
-      html.match(
-        /data-n-a-id=["']([^"']+)["']/i
-      );
-
     if (
-      signatureMatch?.[1] &&
-      timestampMatch?.[1]
+      !html ||
+      html.length < 500
     ) {
-      const id =
-        idMatch?.[1] ??
-        articleId;
+      console.warn(
+        `[NEWS FETCH] HTML response too short (${html.length} chars): ${url}`
+      );
 
-      const requestObject = [
-        "garturlreq",
-        [
-          [
-            "en-US",
-            "US",
-            [
-              "FINANCE_TOP_INDICES",
-              "WEB_TEST_1_0_0",
-            ],
-            null,
-            null,
-            1,
-            1,
-            "US:en",
-            null,
-            180,
-            null,
-            null,
-            null,
-            null,
-            0,
-            null,
-            null,
-            [
-              1608992183,
-              723341000,
-            ],
-          ],
-          "en-US",
-          "US",
-          1,
-          [
-            2,
-            3,
-            4,
-            8,
-          ],
-          1,
-          0,
-          "655000234",
-          0,
-          0,
-          null,
-          null,
-        ],
-        id,
-        timestampMatch[1],
-        signatureMatch[1],
-      ];
-
-      const payload =
-        JSON.stringify([
-          [
-            [
-              "Fbv4je",
-              JSON.stringify(
-                requestObject
-              ),
-              null,
-              "generic",
-            ],
-          ],
-        ]);
-
-      const batchResponse =
-        await fetch(
-          "https://news.google.com/_/DotsSplashUi/data/batchexecute?rpcids=Fbv4je",
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "application/x-www-form-urlencoded;charset=UTF-8",
-
-              "User-Agent":
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136 Safari/537.36",
-
-              Referer:
-                "https://news.google.com/",
-            },
-
-            body:
-              `f.req=${encodeURIComponent(
-                payload
-              )}`,
-
-            signal:
-              AbortSignal.timeout(
-                10000
-              ),
-          }
-        );
-
-      if (
-        batchResponse.ok
-      ) {
-        const batchText =
-          await batchResponse.text();
-
-        const decoded =
-          extractDecodedGoogleUrl(
-            batchText
-          );
-
-        if (
-          decoded &&
-          !isGoogleNewsUrl(
-            decoded
-          )
-        ) {
-          return decoded;
-        }
-      }
+      return null;
     }
 
-    /*
-     * ------------------------------------------------------
-     * Method 3: Old-style base64/protobuf URL
-     * ------------------------------------------------------
-     *
-     * Some older Google News links can still contain
-     * the original URL directly in the encoded payload.
-     */
-
-    try {
-      const decoded =
-        Buffer.from(
-          articleId,
-          "base64url"
-        ).toString(
-          "utf8"
-        );
-
-      const urlMatch =
-        decoded.match(
-          /https?:\/\/[^\s"\\]+/
-        );
-
-      if (
-        urlMatch?.[0] &&
-        !isGoogleNewsUrl(
-          urlMatch[0]
-        )
-      ) {
-        return urlMatch[0];
-      }
-    } catch {
-      // Ignore old-format decoding failures.
-    }
-
-    return null;
+    return {
+      html,
+      finalUrl,
+    };
   } catch (error) {
     console.warn(
-      `Unable to decode Google News URL ${googleUrl}:`,
+      `[NEWS FETCH] Unable to fetch ${url}:`,
       error
     );
 
@@ -734,286 +766,19 @@ async function decodeGoogleNewsUrl(
   }
 }
 
-/**
- * Extract the publisher URL from Google's batchexecute
- * response.
- */
-
-function extractDecodedGoogleUrl(
-  responseText: string
-): string | null {
-  try {
-    /*
-     * Most responses contain:
-     *
-     * ["garturlres","https://publisher.com/article",...]
-     */
-
-    const directMatch =
-      responseText.match(
-        /\[\\"garturlres\\",\\"(https?:\/\/[^"\\]+)/
-      );
-
-    if (
-      directMatch?.[1]
-    ) {
-      return directMatch[1]
-        .replace(
-          /\\u003d/g,
-          "="
-        )
-        .replace(
-          /\\u0026/g,
-          "&"
-        )
-        .replace(
-          /\\\//g,
-          "/"
-        );
-    }
-
-    /*
-     * Fallback: search for any publisher URL in the
-     * batchexecute response that isn't Google.
-     */
-
-    const urlMatches =
-      responseText.match(
-        /https?:\\?\/\\?\/[^\s"'\\]+/g
-      ) ?? [];
-
-    for (
-      const rawUrl of urlMatches
-    ) {
-      const url =
-        rawUrl
-          .replace(
-            /\\u003d/g,
-            "="
-          )
-          .replace(
-            /\\u0026/g,
-            "&"
-          )
-          .replace(
-            /\\\//g,
-            "/"
-          )
-          .replace(
-            /\\/g,
-            ""
-          );
-
-      if (
-        /^https?:\/\//i.test(
-          url
-        ) &&
-        !isGoogleNewsUrl(
-          url
-        ) &&
-        !url.includes(
-          "google.com"
-        ) &&
-        !url.includes(
-          "gstatic.com"
-        )
-      ) {
-        return url;
-      }
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * ----------------------------------------------------------
- * Resolve article URL
- * ----------------------------------------------------------
- */
-
-async function resolveUrl(
-  url: string
-): Promise<string> {
-  /*
-   * Regular publisher URL.
-   */
-
-  if (
-    !isGoogleNewsUrl(url)
-  ) {
-    return url;
-  }
-
-  /*
-   * Google News RSS article URL.
-   */
-
-  const decoded =
-    await decodeGoogleNewsUrl(
-      url
-    );
-
-  if (
-    decoded &&
-    !isGoogleNewsUrl(
-      decoded
-    )
-  ) {
-    console.log(
-      `Resolved Google News URL:\n${url}\n→ ${decoded}`
-    );
-
-    return decoded;
-  }
-
-  console.warn(
-    `Could not resolve Google News URL: ${url}`
-  );
-
-  /*
-   * Keep the original URL as a final fallback.
-   */
-
-  return url;
-}
-
 /*
- * ----------------------------------------------------------
- * JSON-LD extraction
- * ----------------------------------------------------------
+ * ============================================================
+ * HTML → text
+ * ============================================================
  */
 
-function extractJsonLd(
-  html: string
-): string[] {
-  const results: string[] = [];
-
-  const matches = html.matchAll(
-    /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
-  );
-
-  for (const match of matches) {
-    const raw = match[1]?.trim();
-
-    if (!raw) {
-      continue;
-    }
-
-    try {
-      const parsed = JSON.parse(raw);
-
-      const objects = Array.isArray(parsed)
-        ? parsed
-        : [parsed];
-
-      for (const object of objects) {
-        if (
-          !object ||
-          typeof object !== "object"
-        ) {
-          continue;
-        }
-
-        const articleBody =
-          typeof object.articleBody ===
-          "string"
-            ? object.articleBody
-            : null;
-
-        const description =
-          typeof object.description ===
-          "string"
-            ? object.description
-            : null;
-
-        const headline =
-          typeof object.headline ===
-          "string"
-            ? object.headline
-            : null;
-
-        if (articleBody) {
-          results.push(articleBody);
-        }
-
-        if (
-          description &&
-          description.length > 100
-        ) {
-          results.push(description);
-        }
-
-        if (
-          headline &&
-          headline.length > 20
-        ) {
-          results.push(headline);
-        }
-      }
-    } catch {
-      /*
-       * Invalid JSON-LD is common.
-       * Ignore it and continue.
-       */
-    }
-  }
-
-  return results;
-}
-
-/*
- * ----------------------------------------------------------
- * Meta extraction
- * ----------------------------------------------------------
- */
-
-function extractMetaContent(
-  html: string
-): string[] {
-  const results: string[] = [];
-
-  const patterns = [
-    /<meta\b[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["'][^>]*>/gi,
-
-    /<meta\b[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/gi,
-
-    /<meta\b[^>]*name=["']twitter:description["'][^>]*content=["']([^"']+)["'][^>]*>/gi,
-  ];
-
-  for (const pattern of patterns) {
-    const matches = html.matchAll(pattern);
-
-    for (const match of matches) {
-      if (match[1]) {
-        results.push(
-          decodeHtmlEntities(
-            match[1]
-          )
-        );
-      }
-    }
-  }
-
-  return results;
-}
-
-/*
- * ----------------------------------------------------------
- * HTML article extraction
- * ----------------------------------------------------------
- */
-
-function extractHtmlArticleText(
+function htmlToText(
   html: string
 ): string {
   let text = html;
 
   /*
-   * Remove elements that almost never contain
-   * useful article content.
+   * Remove scripts.
    */
 
   text = text.replace(
@@ -1021,35 +786,63 @@ function extractHtmlArticleText(
     " "
   );
 
+  /*
+   * Remove styles.
+   */
+
   text = text.replace(
     /<style\b[^>]*>[\s\S]*?<\/style>/gi,
     " "
   );
+
+  /*
+   * Remove noscript.
+   */
 
   text = text.replace(
     /<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi,
     " "
   );
 
+  /*
+   * Remove SVG.
+   */
+
   text = text.replace(
     /<svg\b[^>]*>[\s\S]*?<\/svg>/gi,
     " "
   );
+
+  /*
+   * Remove navigation.
+   */
 
   text = text.replace(
     /<nav\b[^>]*>[\s\S]*?<\/nav>/gi,
     " "
   );
 
+  /*
+   * Remove footer.
+   */
+
   text = text.replace(
     /<footer\b[^>]*>[\s\S]*?<\/footer>/gi,
     " "
   );
 
+  /*
+   * Remove header.
+   */
+
   text = text.replace(
     /<header\b[^>]*>[\s\S]*?<\/header>/gi,
     " "
   );
+
+  /*
+   * Remove aside.
+   */
 
   text = text.replace(
     /<aside\b[^>]*>[\s\S]*?<\/aside>/gi,
@@ -1057,16 +850,16 @@ function extractHtmlArticleText(
   );
 
   /*
-   * Preserve paragraph-like separation.
+   * Preserve paragraph boundaries.
    */
 
   text = text.replace(
-    /<\/(p|article|section|div|li|h1|h2|h3|h4|blockquote)>/gi,
+    /<\/(p|article|main|section|div|li|h1|h2|h3|h4|h5|blockquote|br)>/gi,
     "\n"
   );
 
   /*
-   * Remove remaining HTML.
+   * Remove remaining HTML tags.
    */
 
   text = text.replace(
@@ -1074,15 +867,369 @@ function extractHtmlArticleText(
     " "
   );
 
-  text = decodeHtmlEntities(text);
+  /*
+   * Decode entities.
+   */
 
-  return cleanText(text);
+  text =
+    decodeHtmlEntities(
+      text
+    );
+
+  return cleanText(
+    text
+  );
 }
 
 /*
- * ----------------------------------------------------------
- * Article quality scoring
- * ----------------------------------------------------------
+ * ============================================================
+ * JSON-LD extraction
+ * ============================================================
+ */
+
+function extractJsonLdArticleBodies(
+  html: string
+): string[] {
+  const results: string[] =
+    [];
+
+  const matches =
+    html.matchAll(
+      /<script\b[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi
+    );
+
+  for (
+    const match of matches
+  ) {
+    const raw =
+      match[1]?.trim();
+
+    if (!raw) {
+      continue;
+    }
+
+    try {
+      const parsed =
+        JSON.parse(raw);
+
+      const objects =
+        Array.isArray(parsed)
+          ? parsed
+          : [parsed];
+
+      for (
+        const object of objects
+      ) {
+        collectJsonLdArticleBodies(
+          object,
+          results
+        );
+      }
+    } catch {
+      /*
+       * Some publishers include malformed
+       * JSON-LD. Ignore it.
+       */
+    }
+  }
+
+  return results;
+}
+
+function collectJsonLdArticleBodies(
+  value: unknown,
+  results: string[]
+): void {
+  if (!value) {
+    return;
+  }
+
+  if (
+    Array.isArray(value)
+  ) {
+    for (
+      const item of value
+    ) {
+      collectJsonLdArticleBodies(
+        item,
+        results
+      );
+    }
+
+    return;
+  }
+
+  if (
+    typeof value !==
+      "object" ||
+    value === null
+  ) {
+    return;
+  }
+
+  const object =
+    value as Record<
+      string,
+      unknown
+    >;
+
+  const articleBody =
+    object.articleBody;
+
+  if (
+    typeof articleBody ===
+      "string" &&
+    isUsableArticleText(
+      articleBody
+    )
+  ) {
+    results.push(
+      cleanText(
+        articleBody
+      )
+    );
+  }
+
+  /*
+   * Some pages use @graph.
+   */
+
+  if (
+    object["@graph"]
+  ) {
+    collectJsonLdArticleBodies(
+      object["@graph"],
+      results
+    );
+  }
+
+  /*
+   * Some structured data nests
+   * article information.
+   */
+
+  for (
+    const valueItem of Object.values(
+      object
+    )
+  ) {
+    if (
+      typeof valueItem ===
+        "object" &&
+      valueItem !== null
+    ) {
+      collectJsonLdArticleBodies(
+        valueItem,
+        results
+      );
+    }
+  }
+}
+
+/*
+ * ============================================================
+ * <article> extraction
+ * ============================================================
+ */
+
+function extractArticleElement(
+  html: string
+): string | null {
+  const match =
+    html.match(
+      /<article\b[^>]*>([\s\S]*?)<\/article>/i
+    );
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const text =
+    htmlToText(
+      match[1]
+    );
+
+  return isUsableArticleText(
+    text
+  )
+    ? text
+    : null;
+}
+
+/*
+ * ============================================================
+ * <main> extraction
+ * ============================================================
+ */
+
+function extractMainElement(
+  html: string
+): string | null {
+  const match =
+    html.match(
+      /<main\b[^>]*>([\s\S]*?)<\/main>/i
+    );
+
+  if (!match?.[1]) {
+    return null;
+  }
+
+  const text =
+    htmlToText(
+      match[1]
+    );
+
+  return isUsableArticleText(
+    text
+  )
+    ? text
+    : null;
+}
+
+/*
+ * ============================================================
+ * Paragraph extraction
+ * ============================================================
+ */
+
+function extractParagraphText(
+  html: string
+): string | null {
+  /*
+   * Prefer paragraphs inside <article>.
+   */
+
+  const articleMatch =
+    html.match(
+      /<article\b[^>]*>([\s\S]*?)<\/article>/i
+    );
+
+  /*
+   * Otherwise prefer paragraphs inside <main>.
+   */
+
+  const mainMatch =
+    html.match(
+      /<main\b[^>]*>([\s\S]*?)<\/main>/i
+    );
+
+  const container =
+    articleMatch?.[1] ||
+    mainMatch?.[1] ||
+    html;
+
+  const paragraphs =
+    container.match(
+      /<p\b[^>]*>[\s\S]*?<\/p>/gi
+    ) || [];
+
+  const extracted =
+    paragraphs
+      .map(
+        (paragraph) =>
+          htmlToText(
+            paragraph
+          )
+      )
+      .filter(
+        (paragraph) =>
+          paragraph.length >=
+          40
+      );
+
+  /*
+   * Don't accept a page that only has
+   * one or two tiny snippets.
+   */
+
+  if (
+    extracted.length < 3
+  ) {
+    return null;
+  }
+
+  const text =
+    cleanText(
+      extracted.join(
+        "\n\n"
+      )
+    );
+
+  return isUsableArticleText(
+    text
+  )
+    ? text
+    : null;
+}
+
+/*
+ * ============================================================
+ * Metadata extraction
+ * ============================================================
+ */
+
+function extractMetaDescriptions(
+  html: string
+): string[] {
+  const results: string[] =
+    [];
+
+  const patterns = [
+    /<meta\b[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/gi,
+
+    /<meta\b[^>]*content=["']([^"']+)["'][^>]*name=["']description["'][^>]*>/gi,
+
+    /<meta\b[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["'][^>]*>/gi,
+
+    /<meta\b[^>]*content=["']([^"']+)["'][^>]*property=["']og:description["'][^>]*>/gi,
+
+    /<meta\b[^>]*name=["']twitter:description["'][^>]*content=["']([^"']+)["'][^>]*>/gi,
+
+    /<meta\b[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:description["'][^>]*>/gi,
+  ];
+
+  for (
+    const pattern of patterns
+  ) {
+    const matches =
+      html.matchAll(
+        pattern
+      );
+
+    for (
+      const match of matches
+    ) {
+      if (!match[1]) {
+        continue;
+      }
+
+      const text =
+        cleanText(
+          decodeHtmlEntities(
+            match[1]
+          )
+        );
+
+      if (
+        text.length >= 100 &&
+        !isGoogleNewsBoilerplate(
+          text
+        )
+      ) {
+        results.push(
+          text
+        );
+      }
+    }
+  }
+
+  return results;
+}
+
+/*
+ * ============================================================
+ * Article text quality score
+ * ============================================================
  */
 
 function scoreArticleText(
@@ -1090,6 +1237,8 @@ function scoreArticleText(
 ): number {
   const lower =
     text.toLowerCase();
+
+  let score = 0;
 
   const usefulSignals = [
     "according to",
@@ -1111,365 +1260,661 @@ function scoreArticleText(
     "announced",
     "launch",
     "released",
+    "technology",
   ];
 
-  let score = 0;
-
-  for (const signal of usefulSignals) {
+  for (
+    const signal of usefulSignals
+  ) {
     if (
       lower.includes(signal)
     ) {
-      score += 1;
+      score++;
     }
   }
 
-  if (text.length >= 1000) {
+  if (
+    text.length >= 1000
+  ) {
     score += 3;
   }
 
-  if (text.length >= 3000) {
+  if (
+    text.length >= 3000
+  ) {
     score += 3;
   }
 
-  if (text.length >= 6000) {
+  if (
+    text.length >= 6000
+  ) {
     score += 2;
   }
 
   return score;
 }
 
-/**
- * ----------------------------------------------------------
- * Google News boilerplate detection
- * ----------------------------------------------------------
+/*
+ * ============================================================
+ * Choose best article text
+ * ============================================================
  */
 
-const GOOGLE_NEWS_BOILERPLATE =
-  "Comprehensive up-to-date news coverage, aggregated from sources all over the world by Google News.";
+function chooseBestText(
+  candidates: Array<{
+    text: string;
+    source:
+      | "json_ld"
+      | "article"
+      | "main"
+      | "paragraphs"
+      | "html";
+  }>
+): {
+  text: string;
+  source:
+    | "json_ld"
+    | "article"
+    | "main"
+    | "paragraphs"
+    | "html";
+} | null {
+  let best:
+    | {
+        text: string;
+        source:
+          | "json_ld"
+          | "article"
+          | "main"
+          | "paragraphs"
+          | "html";
+      }
+    | null = null;
 
-function isGoogleNewsBoilerplate(
-  text: string | null | undefined
-): boolean {
-  if (!text) {
-    return false;
+  let bestScore = -1;
+
+  for (
+    const candidate of candidates
+  ) {
+    const text =
+      cleanText(
+        candidate.text
+      );
+
+    if (
+      !isUsableArticleText(
+        text
+      )
+    ) {
+      continue;
+    }
+
+    const score =
+      scoreArticleText(
+        text
+      );
+
+    /*
+     * Length matters, but quality signals
+     * also matter.
+     */
+
+    const combinedScore =
+      score +
+      Math.min(
+        text.length / 5000,
+        5
+      );
+
+    if (
+      combinedScore >
+      bestScore
+    ) {
+      bestScore =
+        combinedScore;
+
+      best = {
+        text,
+        source:
+          candidate.source,
+      };
+    }
   }
 
-  const normalized =
-    text
-      .replace(/\s+/g, " ")
-      .trim()
-      .toLowerCase();
-
-  return normalized.includes(
-    GOOGLE_NEWS_BOILERPLATE.toLowerCase()
-  );
+  return best;
 }
 
 /*
- * ----------------------------------------------------------
- * Fetch article content
- * ----------------------------------------------------------
+ * ============================================================
+ * Fetch and extract article
+ * ============================================================
  */
 
-async function fetchArticleContent(
+export async function fetchArticle(
   url: string,
-  rssSummary: string | null
-): Promise<{
-  text: string | null;
+  rssSummary: string | null = null
+): Promise<ArticleFetchResult> {
+  const fetchedAt =
+    new Date().toISOString();
 
-  source:
-    | "json_ld"
-    | "html"
-    | "meta"
-    | "rss"
-    | "failed";
-
-  status:
-    | "success"
-    | "partial"
-    | "failed";
-}> {
   /*
-   * Never attempt to treat a Google News wrapper page
-   * as an article.
+   * Never fetch Google News directly.
    */
 
   if (
     isGoogleNewsUrl(url)
   ) {
     console.warn(
-      `Skipping article fetch because URL is still a Google News wrapper: ${url}`
+      `[NEWS ARTICLE] Google News URL rejected: ${url}`
     );
 
     /*
-     * Do NOT use the Google News RSS summary if it is
-     * just Google's generic boilerplate.
+     * IMPORTANT:
+     *
+     * Do NOT use the Google News boilerplate
+     * as article text.
      */
-
-    if (
-      rssSummary &&
-      rssSummary.trim().length >= 100 &&
-      !isGoogleNewsBoilerplate(
-        rssSummary
-      )
-    ) {
-      return {
-        text:
-          rssSummary
-            .trim()
-            .slice(
-              0,
-              10000
-            ),
-
-        source:
-          "rss",
-
-        status:
-          "partial",
-      };
-    }
 
     return {
       text: null,
-      source: "failed",
-      status: "failed",
+
+      source: null,
+
+      status:
+        "failed",
+
+      fetchedAt,
+
+      length: 0,
+
+      resolvedUrl: null,
     };
   }
 
-  try {
-    const response =
-      await fetch(url, {
-        method: "GET",
-        redirect: "follow",
+  /*
+   * ----------------------------------------------------------
+   * Fetch publisher HTML
+   * ----------------------------------------------------------
+   */
 
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/136 Safari/537.36",
-
-          Accept:
-            "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
-
-          "Accept-Language":
-            "en-US,en;q=0.9",
-        },
-
-        signal:
-          AbortSignal.timeout(
-            15000
-          ),
-      });
-
-    if (!response.ok) {
-      console.warn(
-        `News article fetch returned ${response.status}: ${url}`
-      );
-    } else {
-      /*
-       * If the publisher redirects us back to Google News,
-       * don't treat the result as an article.
-       */
-
-      if (
-        isGoogleNewsUrl(
-          response.url
-        )
-      ) {
-        console.warn(
-          `Publisher request redirected back to Google News: ${url}`
-        );
-      } else {
-        const contentType =
-          response.headers.get(
-            "content-type"
-          ) || "";
-
-        if (
-          contentType.includes(
-            "text/html"
-          ) ||
-          contentType.includes(
-            "application/xhtml+xml"
-          )
-        ) {
-          const html =
-            await response.text();
-
-          /*
-           * FIRST: JSON-LD
-           */
-
-          const jsonLd =
-            extractJsonLd(html);
-
-          const jsonLdText =
-            cleanText(
-              jsonLd.join(
-                "\n\n"
-              )
-            );
-
-          if (
-            jsonLdText.length >=
-              500 &&
-            scoreArticleText(
-              jsonLdText
-            ) >= 3 &&
-            !isGoogleNewsBoilerplate(
-              jsonLdText
-            )
-          ) {
-            return {
-              text:
-                jsonLdText.slice(
-                  0,
-                  50000
-                ),
-
-              source:
-                "json_ld",
-
-              status:
-                "success",
-            };
-          }
-
-          /*
-           * SECOND: normal HTML
-           */
-
-          const htmlText =
-            extractHtmlArticleText(
-              html
-            );
-
-          if (
-            htmlText.length >=
-              500 &&
-            scoreArticleText(
-              htmlText
-            ) >= 3 &&
-            !isGoogleNewsBoilerplate(
-              htmlText
-            )
-          ) {
-            return {
-              text:
-                htmlText.slice(
-                  0,
-                  50000
-                ),
-
-              source:
-                "html",
-
-              status:
-                "success",
-            };
-          }
-
-          /*
-           * THIRD: metadata
-           */
-
-          const metaText =
-            cleanText(
-              extractMetaContent(
-                html
-              ).join(
-                "\n\n"
-              )
-            );
-
-          if (
-            metaText.length >=
-              100 &&
-            !isGoogleNewsBoilerplate(
-              metaText
-            )
-          ) {
-            return {
-              text:
-                metaText.slice(
-                  0,
-                  10000
-                ),
-
-              source:
-                "meta",
-
-              status:
-                "partial",
-            };
-          }
-        }
-      }
-    }
-  } catch (error) {
-    console.warn(
-      `Unable to fetch news article ${url}:`,
-      error
+  const response =
+    await fetchHtml(
+      url
     );
+
+  if (!response) {
+    /*
+     * We intentionally do NOT convert an arbitrary RSS
+     * snippet into article_text.
+     *
+     * The RSS snippet remains in `summary`.
+     */
+
+    return {
+      text: null,
+
+      source: null,
+
+      status:
+        "failed",
+
+      fetchedAt,
+
+      length: 0,
+
+      resolvedUrl: url,
+    };
+  }
+
+  const resolvedUrl =
+    response.finalUrl ||
+    url;
+
+  const html =
+    response.html;
+
+  /*
+   * ----------------------------------------------------------
+   * 1. JSON-LD
+   * ----------------------------------------------------------
+   */
+
+  const jsonLdBodies =
+    extractJsonLdArticleBodies(
+      html
+    );
+
+  const jsonLdCandidates =
+    jsonLdBodies.map(
+      (text) => ({
+        text,
+        source:
+          "json_ld" as const,
+      })
+    );
+
+  const jsonLdBest =
+    chooseBestText(
+      jsonLdCandidates
+    );
+
+  if (
+    jsonLdBest &&
+    jsonLdBest.text.length >=
+      MIN_ARTICLE_LENGTH
+  ) {
+    const finalText =
+      truncateText(
+        jsonLdBest.text,
+        MAX_ARTICLE_LENGTH
+      );
+
+    console.log(
+      [
+        "[NEWS ARTICLE]",
+        "SUCCESS",
+        `Method: JSON-LD`,
+        `Length: ${finalText.length}`,
+        `URL: ${resolvedUrl}`,
+      ].join(" | ")
+    );
+
+    return {
+      text: finalText,
+
+      source:
+        "json_ld",
+
+      status:
+        "success",
+
+      fetchedAt,
+
+      length:
+        finalText.length,
+
+      resolvedUrl,
+    };
   }
 
   /*
-   * FOURTH: RSS fallback.
-   *
-   * Only use RSS content if it is actually article-like.
+   * ----------------------------------------------------------
+   * 2. <article>
+   * ----------------------------------------------------------
    */
 
-  /*
-   * FOURTH: RSS fallback.
-   */
+  const articleElement =
+    extractArticleElement(
+      html
+    );
 
   if (
-    rssSummary &&                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
-    rssSummary.trim().length >= 100
+    articleElement &&
+    scoreArticleText(
+      articleElement
+    ) >= 3
   ) {
+    const finalText =
+      truncateText(
+        articleElement,
+        MAX_ARTICLE_LENGTH
+      );
+
+    console.log(
+      [
+        "[NEWS ARTICLE]",
+        "SUCCESS",
+        "Method: <article>",
+        `Length: ${finalText.length}`,
+        `URL: ${resolvedUrl}`,
+      ].join(" | ")
+    );
+
     return {
-      text:
-        rssSummary
-          .trim()
-          .slice(0, 10000),
+      text: finalText,
 
       source:
-        "rss",
+        "article",
+
+      status:
+        "success",
+
+      fetchedAt,
+
+      length:
+        finalText.length,
+
+      resolvedUrl,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * 3. <main>
+   * ----------------------------------------------------------
+   */
+
+  const mainElement =
+    extractMainElement(
+      html
+    );
+
+  if (
+    mainElement &&
+    scoreArticleText(
+      mainElement
+    ) >= 3
+  ) {
+    const finalText =
+      truncateText(
+        mainElement,
+        MAX_ARTICLE_LENGTH
+      );
+
+    console.log(
+      [
+        "[NEWS ARTICLE]",
+        "SUCCESS",
+        "Method: <main>",
+        `Length: ${finalText.length}`,
+        `URL: ${resolvedUrl}`,
+      ].join(" | ")
+    );
+
+    return {
+      text: finalText,
+
+      source:
+        "main",
+
+      status:
+        "success",
+
+      fetchedAt,
+
+      length:
+        finalText.length,
+
+      resolvedUrl,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * 4. Paragraph extraction
+   * ----------------------------------------------------------
+   */
+
+  const paragraphText =
+    extractParagraphText(
+      html
+    );
+
+  if (
+    paragraphText &&
+    scoreArticleText(
+      paragraphText
+    ) >= 3
+  ) {
+    const finalText =
+      truncateText(
+        paragraphText,
+        MAX_ARTICLE_LENGTH
+      );
+
+    console.log(
+      [
+        "[NEWS ARTICLE]",
+        "SUCCESS",
+        "Method: paragraphs",
+        `Length: ${finalText.length}`,
+        `URL: ${resolvedUrl}`,
+      ].join(" | ")
+    );
+
+    return {
+      text: finalText,
+
+      source:
+        "paragraphs",
+
+      status:
+        "success",
+
+      fetchedAt,
+
+      length:
+        finalText.length,
+
+      resolvedUrl,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * 5. Generic HTML
+   * ----------------------------------------------------------
+   *
+   * This is intentionally last because generic HTML extraction
+   * can contain navigation, cookie banners, related articles,
+   * etc.
+   * ----------------------------------------------------------
+   */
+
+  const genericHtml =
+    htmlToText(
+      html
+    );
+
+  if (
+    genericHtml.length >=
+      MIN_ARTICLE_LENGTH &&
+    scoreArticleText(
+      genericHtml
+    ) >= 8
+  ) {
+    const finalText =
+      truncateText(
+        genericHtml,
+        MAX_ARTICLE_LENGTH
+      );
+
+    console.log(
+      [
+        "[NEWS ARTICLE]",
+        "SUCCESS",
+        "Method: generic HTML",
+        `Length: ${finalText.length}`,
+        `URL: ${resolvedUrl}`,
+      ].join(" | ")
+    );
+
+    return {
+      text: finalText,
+
+      source:
+        "html",
+
+      status:
+        "success",
+
+      fetchedAt,
+
+      length:
+        finalText.length,
+
+      resolvedUrl,
+    };
+  }
+
+  /*
+   * ----------------------------------------------------------
+   * 6. Metadata
+   * ----------------------------------------------------------
+   */
+
+  const metaDescriptions =
+    extractMetaDescriptions(
+      html
+    );
+
+  const metaText =
+    cleanText(
+      metaDescriptions.join(
+        "\n\n"
+      )
+    );
+
+  if (
+    metaText.length >=
+    100
+  ) {
+    console.log(
+      [
+        "[NEWS ARTICLE]",
+        "PARTIAL",
+        "Method: metadata",
+        `Length: ${metaText.length}`,
+        `URL: ${resolvedUrl}`,
+      ].join(" | ")
+    );
+
+    return {
+      text:
+        truncateText(
+          metaText,
+          10000
+        ),
+
+      source:
+        "meta",
 
       status:
         "partial",
+
+      fetchedAt,
+
+      length:
+        Math.min(
+          metaText.length,
+          10000
+        ),
+
+      resolvedUrl,
     };
   }
-    return {
-      text: null,
-      source: "failed",
-      status: "failed",
-    };
-};
+
+  /*
+   * ----------------------------------------------------------
+   * 7. Failed
+   * ----------------------------------------------------------
+   *
+   * Do NOT use RSS summary as article_text.
+   *
+   * The summary is still returned separately in the
+   * discovered candidate.
+   * ----------------------------------------------------------
+   */
+
+  console.warn(
+    [
+      "[NEWS ARTICLE]",
+      "FAILED",
+      "No usable article text found",
+      `HTML length: ${html.length}`,
+      `URL: ${resolvedUrl}`,
+    ].join(" | ")
+  );
+
+  return {
+    text: null,
+
+    source: null,
+
+    status:
+      "failed",
+
+    fetchedAt,
+
+    length: 0,
+
+    resolvedUrl,
+  };
+}
 
 /*
- * ----------------------------------------------------------
- * Discover news
- * ----------------------------------------------------------
+ * ============================================================
+ * Discover News
+ * ============================================================
  */
 
 export async function discoverNews(): Promise<
   DiscoveredNews[]
 > {
-  const candidates: DiscoveredNews[] = [];
+  const candidates: DiscoveredNews[] =
+    [];
 
   const discoveredAt =
     new Date().toISOString();
 
-  for (const feedUrl of NEWS_RSS_FEEDS) {
+  console.log(
+    "============================================================"
+  );
+
+  console.log(
+    "Frontier AI News Discovery Starting"
+  );
+
+  console.log(
+    `RSS feeds: ${NEWS_RSS_FEEDS.length}`
+  );
+
+  console.log(
+    "============================================================"
+  );
+
+  /*
+   * ----------------------------------------------------------
+   * Process each RSS feed independently
+   * ----------------------------------------------------------
+   */
+
+  for (
+    const feedSource of NEWS_RSS_FEEDS
+  ) {
+    console.log(
+      [
+        "",
+        "------------------------------------------------------------",
+        `Scanning: ${feedSource.name}`,
+        `Feed: ${feedSource.url}`,
+        "------------------------------------------------------------",
+      ].join("\n")
+    );
+
     try {
+      /*
+       * THIS is the correct rss-parser usage.
+       */
+
       const feed =
         await parser.parseURL(
-          feedUrl
+          feedSource.url
         );
+
+      console.log(
+        `${feedSource.name}: ${feed.items.length} RSS items found.`
+      );
 
       for (
         const rawItem of feed.items as FeedItem[]
       ) {
+        /*
+         * ------------------------------------------------------
+         * Basic validation
+         * ------------------------------------------------------
+         */
+
         if (
           !rawItem.title ||
           !rawItem.link
@@ -1478,27 +1923,81 @@ export async function discoverNews(): Promise<
         }
 
         const title =
-          rawItem.title.trim();
-
-        const rawSummary =
-          (
-            rawItem.contentSnippet ??
-            rawItem.content ??
-            ""
-          ).trim();
-        
-        const summary =
-          isGoogleNewsBoilerplate(
-            rawSummary
-        ) 
-          ? null
-          : rawSummary;
+          cleanText(
+            rawItem.title
+          );
 
         /*
-         * Lightweight discovery relevance.
-         *
-         * Gemini will make the actual editorial
-         * decision later.
+         * ------------------------------------------------------
+         * Article URL
+         * ------------------------------------------------------
+         */
+
+        let articleUrl =
+          rawItem.link.trim();
+
+        articleUrl =
+          decodeHtmlEntities(
+            articleUrl
+          ).trim();
+
+        /*
+         * Google News URLs are rejected.
+         */
+
+        if (
+          isGoogleNewsUrl(
+            articleUrl
+          )
+        ) {
+          console.warn(
+            [
+              "[NEWS DISCOVERY]",
+              "Skipping Google News wrapper",
+              `Source: ${feedSource.name}`,
+              `Title: ${title}`,
+            ].join(" | ")
+          );
+
+          continue;
+        }
+
+        /*
+         * Validate URL.
+         */
+
+        try {
+          new URL(
+            articleUrl
+          );
+        } catch {
+          console.warn(
+            [
+              "[NEWS DISCOVERY]",
+              "Skipping invalid URL",
+              `Source: ${feedSource.name}`,
+              `URL: ${articleUrl}`,
+            ].join(" | ")
+          );
+
+          continue;
+        }
+
+        /*
+         * ------------------------------------------------------
+         * RSS summary
+         * ------------------------------------------------------
+         */
+
+        const summary =
+          getFeedSummary(
+            rawItem
+          );
+
+        /*
+         * ------------------------------------------------------
+         * Relevance
+         * ------------------------------------------------------
          */
 
         const relevance =
@@ -1507,6 +2006,11 @@ export async function discoverNews(): Promise<
             summary
           );
 
+        /*
+         * Low threshold because Gemini performs
+         * the final editorial filtering.
+         */
+
         if (
           relevance.score < 15
         ) {
@@ -1514,13 +2018,10 @@ export async function discoverNews(): Promise<
         }
 
         /*
-         * Resolve Google News to the actual article.
+         * ------------------------------------------------------
+         * Trusted source boost
+         * ------------------------------------------------------
          */
-
-        const articleUrl =
-          await resolveUrl(
-            rawItem.link
-          );
 
         const trusted =
           isTrustedSource(
@@ -1530,109 +2031,333 @@ export async function discoverNews(): Promise<
         const finalScore =
           trusted
             ? Math.min(
-                relevance.score + 10,
+                relevance.score +
+                  10,
                 100
               )
             : relevance.score;
 
         /*
-         * Fetch article text.
+         * ------------------------------------------------------
+         * Fetch actual article
+         * ------------------------------------------------------
          */
 
+        console.log(
+          [
+            "[NEWS DISCOVERY]",
+            "Fetching article",
+            `Source: ${feedSource.name}`,
+            `Title: ${title}`,
+            `URL: ${articleUrl}`,
+          ].join(" | ")
+        );
+
         const articleContent =
-          await fetchArticleContent(
+          await fetchArticle(
             articleUrl,
-            summary || null
+            summary
           );
 
-        candidates.push({
-          title,
+        /*
+         * ------------------------------------------------------
+         * Determine final URL
+         * ------------------------------------------------------
+         */
 
-          source_url:
-            rawItem.link,
+        const finalArticleUrl =
+          articleContent.resolvedUrl &&
+          !isGoogleNewsUrl(
+            articleContent.resolvedUrl
+          )
+            ? articleContent.resolvedUrl
+            : articleUrl;
 
-          article_url:
-            articleUrl,
+        /*
+         * Never store a Google URL.
+         */
 
-          source_name:
-            rawItem.source?.name?.trim() ||
-            getDomain(articleUrl) ||
-            "Unknown",
+        if (
+          isGoogleNewsUrl(
+            finalArticleUrl
+          )
+        ) {
+          console.warn(
+            [
+              "[NEWS DISCOVERY]",
+              "Skipping because final URL is Google News",
+              `Title: ${title}`,
+            ].join(" | ")
+          );
 
-          summary:
-            summary || null,
+          continue;
+        }
 
-          published_at:
-            rawItem.isoDate ||
-            rawItem.pubDate
-              ? new Date(
-                  rawItem.isoDate ??
-                    rawItem.pubDate!
-                ).toISOString()
-              : null,
+        /*
+         * ------------------------------------------------------
+         * Published date
+         * ------------------------------------------------------
+         */
 
-          discovered_at:
-            discoveredAt,
+        const publishedAt =
+          getPublishedAt(
+            rawItem
+          );
 
-          article_text:
-            articleContent.text,
+        /*
+         * ------------------------------------------------------
+         * Source name
+         * ------------------------------------------------------
+         */
 
-          article_text_source:
-            articleContent.source,
+        const sourceName =
+          feedSource.name ||
+          getDomain(
+            finalArticleUrl
+          ) ||
+          "Unknown";
 
-          article_text_fetched_at:
-            new Date().toISOString(),
+        /*
+         * ------------------------------------------------------
+         * Candidate
+         * ------------------------------------------------------
+         */
 
-          article_text_length:
-            articleContent.text
-              ?.length ?? 0,
+        const candidate: DiscoveredNews =
+          {
+            title,
 
-          article_fetch_status:
-            articleContent.status,
+            source_url:
+              articleUrl,
 
-          relevance_score:
-            finalScore,
+            article_url:
+              finalArticleUrl,
 
-          matched_keywords:
-            relevance.matchedKeywords,
-        });
+            source_name:
+              sourceName,
+
+            summary,
+
+            published_at:
+              publishedAt,
+
+            discovered_at:
+              discoveredAt,
+
+            article_text:
+              articleContent.text,
+
+            article_text_source:
+              articleContent.source,
+
+            article_text_fetched_at:
+              articleContent.fetchedAt,
+
+            article_text_length:
+              articleContent.length,
+
+            article_fetch_status:
+              articleContent.status,
+
+            relevance_score:
+              finalScore,
+
+            matched_keywords:
+              relevance.matchedKeywords,
+          };
+
+        candidates.push(
+          candidate
+        );
+
+        /*
+         * ------------------------------------------------------
+         * Debug logging
+         * ------------------------------------------------------
+         */
+
+        console.log(
+          [
+            "[NEWS CANDIDATE]",
+            `Title: ${candidate.title}`,
+            `Source: ${candidate.source_name}`,
+            `URL: ${candidate.article_url}`,
+            `Article text: ${candidate.article_text_length} chars`,
+            `Status: ${candidate.article_fetch_status}`,
+            `Method: ${candidate.article_text_source ?? "none"}`,
+            `Relevance: ${candidate.relevance_score}`,
+          ].join(" | ")
+        );
       }
     } catch (error) {
       console.error(
-        `Failed to process news feed ${feedUrl}:`,
-        error
+        [
+          "[NEWS DISCOVERY]",
+          `Failed to process feed: ${feedSource.name}`,
+          error instanceof Error
+            ? error.message
+            : String(error),
+        ].join(" | ")
       );
+
+      /*
+       * Continue to next publisher.
+       */
     }
   }
 
   /*
-   * Deduplicate by final article URL.
+   * ==========================================================
+   * Deduplicate
+   * ==========================================================
+   *
+   * If the same article appears in multiple feeds,
+   * prefer the version containing more article text.
+   * ==========================================================
    */
+
+  const byUrl =
+    new Map<
+      string,
+      DiscoveredNews
+    >();
+
+  for (
+    const candidate of candidates
+  ) {
+    const normalizedUrl =
+      candidate.article_url
+        .split("#")[0]
+        .replace(
+          /\/$/,
+          ""
+        );
+
+    const existing =
+      byUrl.get(
+        normalizedUrl
+      );
+
+    if (!existing) {
+      byUrl.set(
+        normalizedUrl,
+        candidate
+      );
+
+      continue;
+    }
+
+    if (
+      candidate.article_text_length >
+      existing.article_text_length
+    ) {
+      byUrl.set(
+        normalizedUrl,
+        candidate
+      );
+    }
+  }
 
   const unique =
     Array.from(
-      new Map(
-        candidates.map(
-          (candidate) => [
-            candidate.article_url,
-            candidate,
-          ]
-        )
-      ).values()
+      byUrl.values()
     );
 
   /*
-   * Highest relevance first.
+   * ==========================================================
+   * Sort
+   * ==========================================================
    */
 
   unique.sort(
-    (a, b) =>
-      b.relevance_score -
-      a.relevance_score
+    (a, b) => {
+      if (
+        b.relevance_score !==
+        a.relevance_score
+      ) {
+        return (
+          b.relevance_score -
+          a.relevance_score
+        );
+      }
+
+      const aDate =
+        a.published_at
+          ? new Date(
+              a.published_at
+            ).getTime()
+          : 0;
+
+      const bDate =
+        b.published_at
+          ? new Date(
+              b.published_at
+            ).getTime()
+          : 0;
+
+      return (
+        bDate - aDate
+      );
+    }
+  );
+
+  /*
+   * ==========================================================
+   * Final statistics
+   * ==========================================================
+   */
+
+  const successfulFetches =
+    unique.filter(
+      (item) =>
+        item.article_fetch_status ===
+        "success"
+    ).length;
+
+  const partialFetches =
+    unique.filter(
+      (item) =>
+        item.article_fetch_status ===
+        "partial"
+    ).length;
+
+  const failedFetches =
+    unique.filter(
+      (item) =>
+        item.article_fetch_status ===
+        "failed"
+    ).length;
+
+  console.log(
+    "============================================================"
   );
 
   console.log(
-    `News discovery complete. Raw candidates: ${candidates.length}. Unique candidates: ${unique.length}.`
+    "Frontier AI News Discovery Complete"
+  );
+
+  console.log(
+    `Raw candidates: ${candidates.length}`
+  );
+
+  console.log(
+    `Unique candidates: ${unique.length}`
+  );
+
+  console.log(
+    `Successful article fetches: ${successfulFetches}`
+  );
+
+  console.log(
+    `Partial article fetches: ${partialFetches}`
+  );
+
+  console.log(
+    `Failed article fetches: ${failedFetches}`
+  );
+
+  console.log(
+    "============================================================"
   );
 
   return unique;

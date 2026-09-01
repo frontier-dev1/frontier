@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   discoverNews,
+  scrapeArticleContent,
 } from "@/lib/news/scraper";
 
 import {
