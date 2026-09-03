@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { Copy } from "lucide-react";
+import { SiteHeader } from "./components/SiteHeader";
+import { SiteFooter } from "./components/SiteFooter";
 
 export const dynamic = "force-dynamic";
 
@@ -45,56 +46,9 @@ export default async function HomePage() {
     .limit(10);
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
+    <main className="min-h-screen bg-[#050B18] text-white">
 
-      {/* =====================================================
-          NAVIGATION
-      ====================================================== */}
-
-      <header className="border-b border-white/10 bg-slate-950/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
-
-          <Link
-            href="/"
-            className="text-xl font-bold tracking-tight"
-          >
-            FRONTIER
-          </Link>
-
-          <nav className="flex items-center gap-8 text-sm font-medium">
-            <Link
-              href="/"
-              className="font-semibold text-white"
-            >
-              Home
-            </Link>
-
-            <Link
-              href="/incidents"
-              className="text-slate-300 transition hover:text-white"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/ai_news"
-              className="text-slate-300 transition hover:text-white"
-            >
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="text-slate-300 transition hover:text-white"
-            >
-              About
-            </Link>
-
-          </nav>
-
-        </div>
-      </header>
-
+      <SiteHeader />
 
       {/* =====================================================
           HERO
@@ -110,8 +64,8 @@ export default async function HomePage() {
 
           <div className="max-w-4xl">
 
-            <div className="mb-6 inline-flex items-center rounded-full border border-blue-400/20 bg-blue-400/10 px-4 py-2 text-sm font-medium text-blue-300">
-              AI INCIDENT INTELLIGENCE
+            <div className="mb-6 inline-flex items-center rounded-full border border-blue-400/20 bg-blue-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-blue-300">
+              AI Incident Intelligence
             </div>
 
             <h1 className="text-5xl font-bold tracking-tight sm:text-6xl lg:text-7xl">
@@ -157,7 +111,7 @@ export default async function HomePage() {
           LATEST INCIDENTS
       ====================================================== */}
 
-      <section className="border-y border-white/10 bg-slate-900">
+      <section className="border-y border-white/10 bg-white/[0.02]">
 
         <div className="mx-auto max-w-7xl px-6 py-20">
 
@@ -206,7 +160,7 @@ export default async function HomePage() {
                   <Link
                     key={incident.id}
                     href={`/incidents/${incident.id}`}
-                    className="group rounded-2xl border border-white/10 bg-slate-950/70 p-5 transition hover:border-blue-400/30 hover:bg-slate-950"
+                    className="group rounded-2xl border border-white/10 bg-white/[0.03] p-5 transition hover:border-blue-400/30 hover:bg-white/[0.045]"
                   >
 
                     <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
@@ -297,7 +251,7 @@ export default async function HomePage() {
 
           ) : (
 
-            <div className="mt-10 rounded-2xl border border-white/10 bg-slate-950/50 p-10 text-center">
+            <div className="mt-10 rounded-2xl border border-white/10 bg-white/[0.02] p-10 text-center">
 
               <p className="text-sm text-slate-400">
                 No incidents have been published yet.
@@ -330,7 +284,7 @@ export default async function HomePage() {
           WHAT FRONTIER DOES
       ====================================================== */}
 
-      <section className="bg-slate-950">
+      <section>
 
         <div className="mx-auto max-w-7xl px-6 py-20">
 
@@ -383,48 +337,7 @@ export default async function HomePage() {
       </section>
 
 
-      {/* =====================================================
-          FOOTER
-      ====================================================== */}
-
-      <footer className="border-t border-white/10 bg-slate-950">
-
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 px-6 py-8 sm:flex-row sm:items-center sm:justify-between">
-
-          <div className="text-sm font-bold tracking-tight">
-            FRONTIER
-          </div>
-
-          <div className="flex gap-6 text-sm text-slate-500">
-            <Link
-              href="/"
-              className="text-slate-400 transition hover:text-white"
-            >
-              Home
-            </Link>
-            <Link
-              href="/incidents"
-              className="transition hover:text-slate-300"
-            >
-              Incidents
-            </Link>
-
-            <Link href="/ai_news">
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="transition hover:text-slate-300"
-            >
-              About 
-            </Link>
-
-          </div>
-
-        </div>
-
-      </footer>
+      <SiteFooter />
 
     </main>
   );

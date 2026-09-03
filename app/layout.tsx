@@ -1,4 +1,4 @@
-// app/layout.tsx
+
 import './globals.css';
 import { Header } from '@/app/components/Header';
 
@@ -11,9 +11,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className="dark">
       <body className="min-h-screen bg-background text-foreground antialiased flex flex-col">
-        <Header />
         <main className="flex-1 container mx-auto max-w-7xl px-4 py-6">{children}</main>
       </body>
     </html>
   );
 }
+

@@ -1,5 +1,6 @@
-import Link from "next/link";
 import { createClient } from "../../lib/supabase/server";
+import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "../components/SiteFooter";
 
 export const dynamic = "force-dynamic";
 
@@ -127,7 +128,7 @@ export default async function AINewsPage() {
       []) as NewsArticle[];
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
+    <main className="min-h-screen bg-[#050B18] text-white">
 
       {/* Background gradient */}
 
@@ -141,60 +142,7 @@ export default async function AINewsPage() {
 
       </div>
 
-      {/* Header */}
-
-      <header className="relative z-10 border-b border-white/10 bg-slate-950/70 backdrop-blur-xl">
-
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
-
-          <Link
-            href="/"
-            className="group"
-          >
-            <div className="text-xs font-bold tracking-[0.3em] text-blue-400">
-              FRONTIER
-            </div>
-
-            <div className="text-xs text-slate-500 transition group-hover:text-slate-400">
-              AI Intelligence
-            </div>
-          </Link>
-
-          <nav className="flex items-center gap-6 text-sm">
-
-            <Link
-              href="/"
-              className="text-slate-400 transition hover:text-white"
-            >
-              Home
-            </Link>
-
-            <Link
-              href="/incidents"
-              className="text-slate-400 transition hover:text-white"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/ai-news"
-              className="font-semibold text-white"
-            >
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="text-slate-400 transition hover:text-white"
-            >
-              About
-            </Link>
-
-          </nav>
-
-        </div>
-
-      </header>
+      <SiteHeader />
 
       {/* Hero */}
 
@@ -400,45 +348,7 @@ export default async function AINewsPage() {
 
       </section>
 
-      {/* Footer */}
-
-      <footer className="relative z-10 border-t border-white/10">
-
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 sm:flex-row sm:items-center sm:justify-between">
-
-          <div className="text-xs text-slate-600">
-            © {new Date().getFullYear()} Frontier
-          </div>
-
-          <div className="flex gap-5 text-xs text-slate-600">
-
-            <Link
-              href="/"
-              className="transition hover:text-slate-400"
-            >
-              Home
-            </Link>
-
-            <Link
-              href="/incidents"
-              className="transition hover:text-slate-400"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/about"
-              className="transition hover:text-slate-400"
-            >
-              About
-            </Link>
-
-          </div>
-
-        </div>
-
-      </footer>
-
+      <SiteFooter />
     </main>
   );
 }

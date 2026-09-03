@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { createClient } from "../../lib/supabase/server";
 import type { Database } from "../../database.types";
+import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "../components/SiteFooter";
 
 type Incident =
   Database["public"]["Tables"]["incidents"]["Row"];
@@ -42,54 +44,7 @@ export default async function IncidentsPage() {
 
   return (
     <main className="min-h-screen bg-[#050B18] text-white">
-      {/* Navigation */}
-
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-[#050B18]/90 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8">
-          <Link
-            href="/"
-            className="flex items-center gap-3"
-          >
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-500 text-sm font-black text-white shadow-lg shadow-blue-500/20">
-              F
-            </div>
-
-            <span className="text-lg font-bold tracking-tight">
-              Frontier
-            </span>
-          </Link>
-
-          <nav className="flex items-center gap-6 text-sm">
-            <Link
-              href="/"
-              className="text-slate-400 transition hover:text-white"
-            >
-              Home
-            </Link>
-            
-            <Link
-              href="/incidents"
-              className="font-semibold text-white"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/ai_news"
-              className="text-slate-400 transition hover:text-white"
-            >
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="text-slate-400 transition hover:text-white"
-            >
-              About
-            </Link>
-          </nav>
-        </div>
-      </header>
+      <SiteHeader />
 
       {/* Hero */}
 
@@ -195,45 +150,7 @@ export default async function IncidentsPage() {
         </div>
       </section>
 
-      {/* Footer */}
-
-      <footer className="border-t border-white/10">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-8">
-          <span>
-            © {new Date().getFullYear()} Frontier
-          </span>
-
-          <div className="flex gap-5">
-            <Link
-              href="/"
-              className="transition hover:text-white"
-            >
-              Home
-            </Link>
-
-            <Link
-              href="/incidents"
-              className="transition hover:text-white"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/ai_news"
-              className="transition hover:text-white"
-            >
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="transition hover:text-white"
-            >
-              About
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }

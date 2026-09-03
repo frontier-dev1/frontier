@@ -106,7 +106,7 @@
 }
 
 .dark {
-  --background: oklch(0.12 0.02 255);
+  --background: #050B18;
   --foreground: oklch(0.985 0 0);
 
   --card: oklch(0.16 0.025 255);
@@ -151,11 +151,13 @@
   html {
     @apply font-sans;
     scroll-behavior: smooth;
+    overflow-x: hidden;
   }
 
   body {
     @apply bg-background text-foreground;
     margin: 0;
+    overflow-x: hidden;
   }
 
   ::selection {

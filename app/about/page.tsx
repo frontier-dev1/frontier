@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { SiteHeader } from "../components/SiteHeader";
+import { SiteFooter } from "../components/SiteFooter";
 
 export const metadata = {
   title: "About | Frontier",
@@ -9,47 +11,7 @@ export const metadata = {
 export default function AboutPage() {
   return (
     <main className="min-h-screen bg-[#050B18] text-white">
-      {/* Navigation */}
-      <header className="border-b border-white/10">
-        <div className="mx-auto flex max-w-7xl justify-between px-6 py-5 lg:px-8">
-          <Link
-            href="/"
-            className="text-xl font-bold tracking-tight"
-          >
-            FRONTIER
-          </Link>
-
-          <nav className="flex items-center gap-6 text-sm">
-            <Link
-              href="/"
-              className="text-slate-400 transition hover:text-white"
-            >
-              Home
-            </Link>
-            
-            <Link
-              href="/incidents"
-              className="text-slate-400 transition hover:text-white"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/ai_news"
-              className="text-slate-400 transition hover:text-white"
-            >
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="font-semibold text-white"
-            >
-              About
-            </Link>
-          </nav>
-        </div>
-      </header>
+      <SiteHeader />
 
       {/* Hero */}
       <section className="relative overflow-hidden">
@@ -235,44 +197,7 @@ export default function AboutPage() {
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="border-t border-white/10">
-        <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-8">
-          <span>
-            © {new Date().getFullYear()} Frontier
-          </span>
-
-          <div className="flex gap-5">
-            <Link
-              href="/"
-              className="transition hover:text-white"
-            >
-              Home
-            </Link>
-
-            <Link
-              href="/incidents"
-              className="transition hover:text-white"
-            >
-              Incidents
-            </Link>
-
-            <Link
-              href="/ai_news"
-              className="transition hover:text-white"
-            >
-              AI News
-            </Link>
-
-            <Link
-              href="/about"
-              className="transition hover:text-white"
-            >
-              About
-            </Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter />
     </main>
   );
 }
