@@ -15,12 +15,12 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-white/10 bg-[#050B18]/90 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-8">
-        <Link href="/" className="text-xl font-bold tracking-tight">
+      <div className="mx-auto flex max-w-[1400px] items-center justify-between px-6 py-5 lg:px-8">
+        <Link href="/" className="text-2xl font-bold tracking-tight">
           FRONTIER
         </Link>
 
-        <nav className="flex items-center gap-6 text-sm">
+        <nav className="flex items-center gap-7 text-base">
           {NAV_ITEMS.map((item) => {
             const isActive =
               item.href === "/"

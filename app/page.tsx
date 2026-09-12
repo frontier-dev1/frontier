@@ -60,7 +60,7 @@ export default async function HomePage() {
 
         <div className="pointer-events-none absolute left-1/2 top-0 h-[500px] w-[800px] -translate-x-1/2 rounded-full bg-blue-600/10 blur-3xl" />
 
-        <div className="relative mx-auto max-w-7xl px-6 py-24 lg:py-32">
+        <div className="relative mx-auto max-w-[1400px] px-6 py-24 lg:py-32">
 
           <div className="max-w-4xl">
 
@@ -75,7 +75,7 @@ export default async function HomePage() {
               </span>
             </h1>
 
-            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-400">
+            <p className="mt-6 max-w-2xl text-xl leading-8 text-slate-400">
               Frontier tracks significant incidents involving
               artificial intelligence systems — from unexpected
               behavior and unauthorized actions to security,
@@ -86,14 +86,14 @@ export default async function HomePage() {
 
               <Link
                 href="/incidents"
-                className="rounded-xl bg-blue-500 px-6 py-3.5 text-center text-sm font-semibold text-white shadow-lg shadow-blue-500/10 transition hover:bg-blue-400"
+                className="rounded-xl bg-blue-500 px-6 py-3.5 text-center text-base font-semibold text-white shadow-lg shadow-blue-500/10 transition hover:bg-blue-400"
               >
                 Explore incidents
               </Link>
 
               <Link
                 href="/about"
-                className="rounded-xl border border-white/10 bg-white/5 px-6 py-3.5 text-center text-sm font-semibold text-slate-200 transition hover:bg-white/10"
+                className="rounded-xl border border-white/10 bg-white/5 px-6 py-3.5 text-center text-base font-semibold text-slate-200 transition hover:bg-white/10"
               >
                 About Frontier
               </Link>
@@ -113,7 +113,7 @@ export default async function HomePage() {
 
       <section className="border-y border-white/10 bg-white/[0.02]">
 
-        <div className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mx-auto max-w-[1400px] px-6 py-20">
 
           <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
 
@@ -127,7 +127,7 @@ export default async function HomePage() {
                 Latest incidents
               </h2>
 
-              <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-400">
+              <p className="mt-3 max-w-2xl text-base leading-6 text-slate-400">
                 The most recently documented AI incidents
                 tracked by Frontier.
               </p>
@@ -191,7 +191,7 @@ export default async function HomePage() {
                         </div>
 
 
-                        <h3 className="mt-3 text-lg font-bold text-white transition group-hover:text-blue-300">
+                        <h3 className="mt-3 text-xl font-bold text-white transition group-hover:text-blue-300">
                           {incident.title}
                         </h3>
 
@@ -227,7 +227,7 @@ export default async function HomePage() {
 
 
                         {incident.summary && (
-                          <p className="mt-3 max-w-3xl text-sm leading-6 text-slate-400">
+                          <p className="mt-3 max-w-3xl text-base leading-6 text-slate-400">
                             {incident.summary}
                           </p>
                         )}
@@ -286,7 +286,7 @@ export default async function HomePage() {
 
       <section>
 
-        <div className="mx-auto max-w-7xl px-6 py-20">
+        <div className="mx-auto max-w-[1400px] px-6 py-20">
 
           <div className="max-w-2xl">
 
@@ -298,7 +298,7 @@ export default async function HomePage() {
               A record of AI behavior in the real world.
             </h2>
 
-            <p className="mt-5 text-base leading-7 text-slate-400">
+            <p className="mt-5 text-lg leading-7 text-slate-400">
               As AI systems become increasingly autonomous and
               capable, understanding how they behave inside and outside of
               controlled environments becomes increasingly
@@ -364,11 +364,11 @@ function FeatureCard({
         {number}
       </div>
 
-      <h3 className="mt-5 text-lg font-bold text-white">
+      <h3 className="mt-5 text-xl font-bold text-white">
         {title}
       </h3>
 
-      <p className="mt-3 text-sm leading-6 text-slate-400">
+      <p className="mt-3 text-base leading-6 text-slate-400">
         {description}
       </p>
 

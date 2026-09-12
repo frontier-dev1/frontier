@@ -1355,6 +1355,13 @@ export default function CandidatesDashboard({
             Candidates
           </a>
 
+          <a
+            href="/admin/news-candidates"
+            className="rounded-lg px-4 py-2 text-sm font-medium text-slate-500 hover:bg-white"
+          >
+            News Candidates
+          </a>
+
         </div>
 
         {/* Page heading */}

@@ -146,7 +146,7 @@ export default async function AINewsPage() {
 
       {/* Hero */}
 
-      <section className="relative z-10 mx-auto max-w-7xl px-6 pb-14 pt-20">
+      <section className="relative z-10 mx-auto max-w-[1400px] px-6 pb-14 pt-20">
 
         <div className="max-w-3xl">
 
@@ -175,7 +175,7 @@ export default async function AINewsPage() {
 
       {/* News */}
 
-      <section className="relative z-10 mx-auto max-w-7xl px-6 pb-24">
+      <section className="relative z-10 mx-auto max-w-[1400px] px-6 pb-24">
 
         {news.length === 0 ? (
 

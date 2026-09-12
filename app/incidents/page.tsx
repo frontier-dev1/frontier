@@ -51,7 +51,7 @@ export default async function IncidentsPage() {
       <section className="relative overflow-hidden border-b border-white/10">
         <div className="absolute left-1/2 top-0 h-[450px] w-[900px] -translate-x-1/2 rounded-full bg-blue-600/10 blur-3xl" />
 
-        <div className="relative mx-auto max-w-7xl px-6 pb-16 pt-16 lg:px-8 lg:pb-20 lg:pt-20">
+        <div className="relative mx-auto max-w-[1400px] px-6 pb-16 pt-16 lg:px-8 lg:pb-20 lg:pt-20">
           <div className="max-w-3xl">
             <div className="inline-flex rounded-full border border-blue-400/20 bg-blue-400/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.2em] text-blue-300">
               AI Incident Database
@@ -113,7 +113,7 @@ export default async function IncidentsPage() {
       {/* Incidents */}
 
       <section>
-        <div className="mx-auto max-w-7xl px-6 py-12 lg:px-8 lg:py-16">
+        <div className="mx-auto max-w-[1400px] px-6 py-12 lg:px-8 lg:py-16">
           <div className="flex flex-col gap-3 border-b border-white/10 pb-6 sm:flex-row sm:items-end sm:justify-between">
             <div>
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-blue-400">
@@ -219,7 +219,7 @@ function IncidentCard({
           </div>
 
           {incident.summary && (
-            <p className="mt-5 max-w-4xl text-sm leading-7 text-slate-400">
+            <p className="mt-5 max-w-4xl text-base leading-7 text-slate-400">
               {incident.summary}
             </p>
           )}

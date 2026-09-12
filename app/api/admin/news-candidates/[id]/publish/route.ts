@@ -122,11 +122,21 @@ export async function POST(
 
     /*
      * ---------------------------------------------------------
-     * 4. Require AI review
+     * 4. Require AI review (unless manually overridden)
      * ---------------------------------------------------------
      */
 
+    let force = false;
+
+    try {
+      const body = await request.json();
+      force = body?.force === true;
+    } catch {
+      // No JSON body sent — treat as a normal reviewed publish.
+    }
+
     if (
+      !force &&
       candidate.ai_review_status !==
       "completed"
     ) {
@@ -142,6 +152,7 @@ export async function POST(
     }
 
     if (
+      !force &&
       candidate.ai_is_relevant !==
       true
     ) {
