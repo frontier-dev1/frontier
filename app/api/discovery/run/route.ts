@@ -9,6 +9,7 @@ import {
 } from "../../../../lib/discovery/scraper";
 
 import { reviewCandidate } from "../../../../lib/ai/reviewer";
+import { findBestMatch } from "../../../../lib/duplicate-detection";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,13 @@ const TIME_BUDGET_MS = 45_000;
  * miscategorized news article.
  */
 const MIN_AUTO_PUBLISH_CONFIDENCE = 80;
+
+/*
+ * How similar two incidents' summaries need to be (same company)
+ * to treat them as the same underlying event rather than two
+ * separate incidents.
+ */
+const DUPLICATE_SIMILARITY_THRESHOLD = 0.35;
 
 export async function POST(
   request: Request
@@ -366,6 +374,8 @@ async function runDiscovery(
 
     let autoPublished = 0;
 
+    let duplicatesMerged = 0;
+
     let autoRejected = 0;
 
     let leftForHuman = 0;
@@ -501,48 +511,113 @@ async function runDiscovery(
           result.confidence >= MIN_AUTO_PUBLISH_CONFIDENCE &&
           requiredFieldsPresent
         ) {
-          const { error: publishError } =
-            await adminSupabase.rpc(
-              "publish_incident_candidate",
-              {
-                p_candidate_id: next.id,
-                p_title: next.title,
-                p_company: result.company as string,
-                p_model: result.model,
-                p_severity: result.severity as string,
-                p_category: result.category,
-                p_occurred_at: next.published_at,
-                p_summary: result.incident_summary as string,
-                p_description:
-                  result.incident_description as string,
-              }
-            );
+          /*
+           * --------------------------------------------------
+           * Duplicate check
+           * --------------------------------------------------
+           *
+           * Different publishers often cover the same incident.
+           * Before creating a new incident, check whether an
+           * existing one from the same company already describes
+           * the same event. If so, attach this article as an
+           * additional source instead of publishing a duplicate.
+           */
 
-          if (publishError) {
-            console.error(
-              "Auto-publish failed, leaving for human review:",
-              publishError
-            );
+          const { data: sameCompanyIncidents } =
+            await adminSupabase
+              .from("incidents")
+              .select(
+                "id, title, summary, description, additional_sources"
+              )
+              .ilike("company", result.company as string)
+              .order("created_at", { ascending: false })
+              .limit(15);
+
+          const duplicateMatch = findBestMatch(
+            `${result.incident_summary} ${result.incident_description}`,
+            sameCompanyIncidents ?? [],
+            (incident) =>
+              `${incident.summary} ${incident.description}`,
+            DUPLICATE_SIMILARITY_THRESHOLD
+          );
+
+          if (duplicateMatch) {
+            const existingSources = Array.isArray(
+              duplicateMatch.item.additional_sources
+            )
+              ? duplicateMatch.item.additional_sources
+              : [];
+
+            await adminSupabase
+              .from("incidents")
+              .update({
+                additional_sources: [
+                  ...existingSources,
+                  {
+                    url: next.article_url,
+                    source_name: next.source_name,
+                    title: next.title,
+                  },
+                ],
+                updated_at_timestamp:
+                  new Date().toISOString(),
+              })
+              .eq("id", duplicateMatch.item.id);
 
             await adminSupabase
               .from("incident_candidates")
               .update({
-                status: "reviewing",
+                status: "duplicate",
+                notes: `Merged as an additional source into incident "${duplicateMatch.item.title}" (${duplicateMatch.item.id}), similarity ${duplicateMatch.score.toFixed(2)}.`,
                 updated_at: new Date().toISOString(),
               })
               .eq("id", next.id);
 
-            leftForHuman++;
+            duplicatesMerged++;
           } else {
-            await adminSupabase
-              .from("incident_candidates")
-              .update({
-                status: "accepted",
-                updated_at: new Date().toISOString(),
-              })
-              .eq("id", next.id);
+            const { error: publishError } =
+              await adminSupabase.rpc(
+                "publish_incident_candidate",
+                {
+                  p_candidate_id: next.id,
+                  p_title: next.title,
+                  p_company: result.company as string,
+                  p_model: result.model,
+                  p_severity: result.severity as string,
+                  p_category: result.category,
+                  p_occurred_at: next.published_at,
+                  p_summary: result.incident_summary as string,
+                  p_description:
+                    result.incident_description as string,
+                }
+              );
 
-            autoPublished++;
+            if (publishError) {
+              console.error(
+                "Auto-publish failed, leaving for human review:",
+                publishError
+              );
+
+              await adminSupabase
+                .from("incident_candidates")
+                .update({
+                  status: "reviewing",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", next.id);
+
+              leftForHuman++;
+            } else {
+              await adminSupabase
+                .from("incident_candidates")
+                .update({
+                  status: "accepted",
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", next.id);
+
+              autoPublished++;
+            }
           }
         } else {
           // "review" recommendation, low confidence, or missing
@@ -581,6 +656,7 @@ async function runDiscovery(
         "Batch review complete.",
         `Reviewed ${reviewed}.`,
         `Auto-published ${autoPublished}.`,
+        `Merged as duplicates ${duplicatesMerged}.`,
         `Auto-rejected ${autoRejected}.`,
         `Left for human ${leftForHuman}.`,
         `Failed ${reviewFailed}.`,
@@ -658,6 +734,7 @@ async function runDiscovery(
       review: {
         reviewed,
         auto_published: autoPublished,
+        merged_as_duplicates: duplicatesMerged,
         auto_rejected: autoRejected,
         left_for_human: leftForHuman,
         failed: reviewFailed,

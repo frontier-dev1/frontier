@@ -2,20 +2,55 @@ import { NextResponse } from "next/server";
 
 import {
   discoverNews,
+  fetchArticle,
 } from "@/lib/news/scraper";
 
 import {
   reviewNewsArticle,
 } from "@/lib/ai/news-reviewer";
 
+import { findBestMatch } from "@/lib/duplicate-detection";
+
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-const MAX_AI_REVIEWS = 20;
+/*
+ * Vercel Hobby caps Serverless Function duration at 60s. We stop
+ * well before that so the platform never kills the request
+ * mid-write and leaves a candidate in a half-updated state.
+ */
+export const maxDuration = 60;
+
+const TIME_BUDGET_MS = 45_000;
 const MIN_RELEVANCE_SCORE = 60;
 
+/*
+ * How similar two articles' titles+summaries need to be (same
+ * company) to treat them as coverage of the same underlying story
+ * rather than two separate news items.
+ */
+const DUPLICATE_SIMILARITY_THRESHOLD = 0.35;
+
 export async function POST(
+  request: Request
+) {
+  return runNewsDiscovery(request);
+}
+
+export async function GET(
+  request: Request
+) {
+  /*
+   * Vercel Cron Jobs always send a GET request and automatically
+   * attach `Authorization: Bearer $CRON_SECRET` if that env var is
+   * set on the project — this is what lets the schedule in
+   * vercel.json trigger this route without a logged-in admin.
+   */
+  return runNewsDiscovery(request);
+}
+
+async function runNewsDiscovery(
   request: Request
 ) {
   try {
@@ -42,11 +77,16 @@ export async function POST(
     const cronSecret =
       process.env.FRONTIER_CRON_SECRET;
 
+    const vercelCronSecret =
+      process.env.CRON_SECRET;
+
     const isCronRequest =
       Boolean(
-        cronSecret &&
-          providedSecret &&
-          providedSecret === cronSecret
+        providedSecret &&
+          ((cronSecret &&
+            providedSecret === cronSecret) ||
+            (vercelCronSecret &&
+              providedSecret === vercelCronSecret))
       );
 
     if (!isCronRequest) {
@@ -141,6 +181,7 @@ export async function POST(
     let reviewed = 0;
     let published = 0;
     let rejected = 0;
+    let duplicateArticles = 0;
     let failed = 0;
 
     /*
@@ -248,82 +289,80 @@ export async function POST(
 
     /*
      * ---------------------------------------------------------
-     * 4. Load pending candidates for AI review
+     * 4. Review pending candidates until we run out, or run
+     *    out of safe time within this function invocation.
      * ---------------------------------------------------------
      */
 
-    const {
-      data: pendingCandidates,
-      error:
-        pendingError,
-    } =
-      await supabase
-        .from(
-          "ai_news_candidates"
-        )
-        .select("*")
-        .eq(
-          "status",
-          "pending"
-        )
-        .order(
-          "relevance_score",
-          {
+    const reviewStartedAt = Date.now();
+
+    while (
+      Date.now() - reviewStartedAt <
+      TIME_BUDGET_MS
+    ) {
+      const {
+        data: pending,
+        error: pendingError,
+      } =
+        await supabase
+          .from("ai_news_candidates")
+          .select("*")
+          .eq("status", "pending")
+          .order("relevance_score", {
             ascending: false,
             nullsFirst: false,
-          }
-        )
-        .limit(
-          MAX_AI_REVIEWS
+          })
+          .limit(1);
+
+      if (pendingError) {
+        console.error(
+          "Unable to load news candidates:",
+          pendingError
         );
+        break;
+      }
 
-    if (pendingError) {
-      console.error(
-        "Unable to load news candidates:",
-        pendingError
-      );
+      const candidate = pending?.[0];
 
-      return NextResponse.json(
-        {
-          error:
-            "Discovery succeeded but candidates could not be loaded.",
-        },
-        {
-          status: 500,
-        }
-      );
-    }
+      if (!candidate) {
+        break;
+      }
 
-    /*
-     * ---------------------------------------------------------
-     * 5. Review candidates
-     * ---------------------------------------------------------
-     */
-
-    for (
-      const candidate of
-        pendingCandidates ?? []
-    ) {
       try {
         /*
          * Mark reviewing.
          */
 
         await supabase
-          .from(
-            "ai_news_candidates"
-          )
+          .from("ai_news_candidates")
           .update({
-            status:
-              "reviewing",
-
-            updated_at:
-              new Date().toISOString(),
+            status: "reviewing",
+            updated_at: new Date().toISOString(),
           })
-          .eq(
-            "id",
-            candidate.id
+          .eq("id", candidate.id);
+
+        /*
+         * Discovery only stores RSS metadata — fetch the full
+         * article body now, right before reviewing it.
+         */
+
+        const articleContent =
+          await fetchArticle(
+            candidate.article_url,
+            candidate.summary
           );
+
+        await supabase
+          .from("ai_news_candidates")
+          .update({
+            article_text: articleContent.text,
+            article_text_source: articleContent.source,
+            article_text_fetched_at: new Date().toISOString(),
+            article_text_length:
+              articleContent.text?.length ?? 0,
+            article_fetch_status: articleContent.status,
+          })
+          .eq("id", candidate.id);
 
         /*
          * Ask Gemini.
@@ -348,7 +387,7 @@ export async function POST(
               candidate.summary,
 
             articleText:
-              candidate.article_text,
+              articleContent.text,
           });
 
         reviewed++;
@@ -365,8 +404,47 @@ export async function POST(
           review.relevance_score >=
             MIN_RELEVANCE_SCORE;
 
+        /*
+         * -----------------------------------------------------
+         * Duplicate check
+         * -----------------------------------------------------
+         *
+         * Multiple outlets often cover the same underlying
+         * story. ai_news has no field to merge sources into
+         * (unlike incidents), so a duplicate here is suppressed
+         * rather than published a second time.
+         */
+
+        let isDuplicate = false;
+        let duplicateOfTitle: string | null = null;
+
+        if (shouldPublish && review.company) {
+          const { data: sameCompanyArticles } =
+            await supabase
+              .from("ai_news")
+              .select("title, summary")
+              .ilike("ai_company", review.company)
+              .order("created_at", { ascending: false })
+              .limit(15);
+
+          const duplicateMatch = findBestMatch(
+            `${review.title || candidate.title} ${review.summary || ""}`,
+            sameCompanyArticles ?? [],
+            (article) =>
+              `${article.title} ${article.summary ?? ""}`,
+            DUPLICATE_SIMILARITY_THRESHOLD
+          );
+
+          if (duplicateMatch) {
+            isDuplicate = true;
+            duplicateOfTitle = duplicateMatch.item.title;
+          }
+        }
+
         const candidateStatus =
-          shouldPublish
+          isDuplicate
+            ? "duplicate"
+            : shouldPublish
             ? "published"
             : "rejected";
 
@@ -407,7 +485,9 @@ export async function POST(
                 review.importance,
 
               ai_reasoning:
-                review.reasoning,
+                isDuplicate
+                  ? `Duplicate coverage of "${duplicateOfTitle}" — not published separately.`
+                  : review.reasoning,
 
               ai_reviewed_at:
                 now,
@@ -426,11 +506,14 @@ export async function POST(
 
         /*
          * -----------------------------------------------------
-         * Publish automatically when approved.
+         * Publish automatically when approved and not a
+         * duplicate of something already published.
          * -----------------------------------------------------
          */
 
-        if (shouldPublish) {
+        if (isDuplicate) {
+          duplicateArticles++;
+        } else if (shouldPublish) {
           const {
             error:
               publishError,
@@ -606,10 +689,13 @@ export async function POST(
 
       rejected,
 
+      duplicate_articles:
+        duplicateArticles,
+
       failed,
 
-      max_ai_reviews:
-        MAX_AI_REVIEWS,
+      time_budget_ms:
+        TIME_BUDGET_MS,
 
       minimum_relevance_score:
         MIN_RELEVANCE_SCORE,
