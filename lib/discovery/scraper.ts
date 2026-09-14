@@ -48,6 +48,7 @@ export type DiscoveredCandidate = {
   article_text_length: number;
 
   article_fetch_status:
+    | "pending"
     | "success"
     | "partial"
     | "failed";
@@ -1452,7 +1453,7 @@ function extractMetaDescription(
  * ----------------------------------------------------------
  */
 
-async function fetchArticleContent(
+export async function fetchArticleContent(
   publisherUrl: string,
   rssSummary: string | null
 ): Promise<{
@@ -1797,12 +1798,6 @@ export async function discoverCandidates(): Promise<
 
   let resolutionFailures = 0;
 
-  let articleFetchSuccesses = 0;
-
-  let articleFetchPartials = 0;
-
-  let articleFetchFailures = 0;
-
   for (
     const feedUrl of RSS_FEEDS
   ) {
@@ -1946,36 +1941,16 @@ export async function discoverCandidates(): Promise<
 
         /*
          * ----------------------------------------------------
-         * Fetch article
+         * Article content is fetched later, in a separate
+         * time-boxed batch step, not here. Fetching full
+         * article HTML for every discovered item inline is
+         * what made discovery take minutes and blew past
+         * serverless function time limits.
          * ----------------------------------------------------
          */
 
-        const articleContent =
-          await fetchArticleContent(
-            articleUrl,
-            summary || null
-          );
-
-        if (
-          articleContent.status ===
-          "success"
-        ) {
-          articleFetchSuccesses++;
-        } else if (
-          articleContent.status ===
-          "partial"
-        ) {
-          articleFetchPartials++;
-        } else {
-          articleFetchFailures++;
-        }
-
         const finalArticleUrl =
-          isValidPublisherUrl(
-            articleContent.resolvedUrl
-          )
-            ? articleContent.resolvedUrl
-            : articleUrl;
+          articleUrl;
 
         const sourceName =
           getDomain(
@@ -2034,20 +2009,19 @@ export async function discoverCandidates(): Promise<
               null,
 
             article_text:
-              articleContent.text,
+              null,
 
             article_text_source:
-              articleContent.source,
+              null,
 
             article_text_fetched_at:
-              new Date().toISOString(),
+              null,
 
             article_text_length:
-              articleContent.text
-                ?.length ?? 0,
+              0,
 
             article_fetch_status:
-              articleContent.status,
+              "pending",
           };
 
         candidates.push(
@@ -2060,9 +2034,6 @@ export async function discoverCandidates(): Promise<
             title,
             `source=${sourceName}`,
             `url=${finalArticleUrl}`,
-            `text=${articleContent.text?.length ?? 0}`,
-            `status=${articleContent.status}`,
-            `method=${articleContent.source}`,
           ].join(" ")
         );
       }
@@ -2113,9 +2084,7 @@ export async function discoverCandidates(): Promise<
       `Resolved candidates: ${candidates.length}.`,
       `Unique candidates: ${unique.length}.`,
       `Resolution failures: ${resolutionFailures}.`,
-      `Article fetch success: ${articleFetchSuccesses}.`,
-      `Article fetch partial: ${articleFetchPartials}.`,
-      `Article fetch failed: ${articleFetchFailures}.`,
+      "Article content will be fetched during batch review.",
     ].join(" ")
   );
 

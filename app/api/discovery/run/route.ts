@@ -5,15 +5,58 @@ import { createAdminClient } from "../../../../lib/supabase/admin";
 
 import {
   discoverCandidates,
+  fetchArticleContent,
 } from "../../../../lib/discovery/scraper";
 
+import { reviewCandidate } from "../../../../lib/ai/reviewer";
+
 export const dynamic = "force-dynamic";
+
+/*
+ * Vercel Hobby caps Serverless Function duration at 60s. We stop
+ * processing well before that so the platform never kills the
+ * request mid-write and leaves a candidate in a half-updated state.
+ */
+export const maxDuration = 60;
+
+const TIME_BUDGET_MS = 45_000;
+
+/*
+ * An incident candidate is only auto-published when the AI is this
+ * confident AND explicitly recommends publishing. Anything less
+ * (including every "review" recommendation) is left for a human,
+ * because incidents name real companies and products — a wrong
+ * auto-publish here is a very different kind of mistake than a
+ * miscategorized news article.
+ */
+const MIN_AUTO_PUBLISH_CONFIDENCE = 80;
 
 export async function POST(
   request: Request
 ) {
+  return runDiscovery(request);
+}
+
+export async function GET(
+  request: Request
+) {
+  /*
+   * Vercel Cron Jobs always send a GET request and automatically
+   * attach `Authorization: Bearer $CRON_SECRET` if that env var is
+   * set on the project — this is what lets the schedule in
+   * vercel.json trigger this route without a logged-in admin.
+   */
+  return runDiscovery(request);
+}
+
+async function runDiscovery(
+  request: Request
+) {
   const cronSecret =
     process.env.FRONTIER_CRON_SECRET;
+
+  const vercelCronSecret =
+    process.env.CRON_SECRET;
 
   /*
    * ----------------------------------------------------------
@@ -34,9 +77,11 @@ export async function POST(
 
   const isAutomatedRequest =
     Boolean(
-      cronSecret &&
-        providedSecret &&
-        providedSecret === cronSecret
+      providedSecret &&
+        ((cronSecret &&
+          providedSecret === cronSecret) ||
+          (vercelCronSecret &&
+            providedSecret === vercelCronSecret))
     );
 
   if (!isAutomatedRequest) {
@@ -167,12 +212,6 @@ export async function POST(
 
     let duplicates = 0;
 
-    let fetchSuccesses = 0;
-
-    let fetchPartials = 0;
-
-    let fetchFailures = 0;
-
     /*
      * --------------------------------------------------------
      * 5. Save every discovered candidate
@@ -182,24 +221,6 @@ export async function POST(
     for (
       const candidate of candidates
     ) {
-      /*
-       * Track article retrieval quality.
-       */
-
-      if (
-        candidate.article_fetch_status ===
-        "success"
-      ) {
-        fetchSuccesses++;
-      } else if (
-        candidate.article_fetch_status ===
-        "partial"
-      ) {
-        fetchPartials++;
-      } else {
-        fetchFailures++;
-      }
-
       /*
        * Log useful information during development.
        */
@@ -328,6 +349,246 @@ export async function POST(
 
     /*
      * ----------------------------------------------------------
+     * 5.5. Batch review + auto-decide
+     * ----------------------------------------------------------
+     *
+     * Discovery above only inserts bare candidates (title, url,
+     * summary) — fast, since it's just RSS parsing. Fetching full
+     * article text and running it through Gemini happens here,
+     * one candidate at a time, until we're close to the function's
+     * time limit. This keeps a single invocation safe on Vercel
+     * Hobby regardless of how many candidates are queued up.
+     */
+
+    const reviewStartedAt = Date.now();
+
+    let reviewed = 0;
+
+    let autoPublished = 0;
+
+    let autoRejected = 0;
+
+    let leftForHuman = 0;
+
+    let reviewFailed = 0;
+
+    while (
+      Date.now() - reviewStartedAt <
+      TIME_BUDGET_MS
+    ) {
+      const {
+        data: pending,
+        error: pendingError,
+      } = await adminSupabase
+        .from("incident_candidates")
+        .select("*")
+        .eq("status", "pending")
+        .order("relevance_score", {
+          ascending: false,
+        })
+        .limit(1);
+
+      if (pendingError) {
+        console.error(
+          "Failed to load pending candidate:",
+          pendingError
+        );
+        break;
+      }
+
+      const next = pending?.[0];
+
+      if (!next) {
+        break;
+      }
+
+      try {
+        // Mark as reviewing so a second concurrent run (or a
+        // human clicking "Run AI Review") doesn't double-process it.
+        await adminSupabase
+          .from("incident_candidates")
+          .update({
+            status: "reviewing",
+            ai_review_status: "reviewing",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", next.id);
+
+        // Fetch full article content now, since discovery deferred it.
+        const articleContent =
+          await fetchArticleContent(
+            next.article_url,
+            next.summary
+          );
+
+        await adminSupabase
+          .from("incident_candidates")
+          .update({
+            article_text: articleContent.text,
+            article_text_source: articleContent.source,
+            article_text_fetched_at: new Date().toISOString(),
+            article_text_length:
+              articleContent.text?.length ?? 0,
+            article_fetch_status: articleContent.status,
+          })
+          .eq("id", next.id);
+
+        const result = await reviewCandidate({
+          title: next.title,
+          sourceName: next.source_name,
+          sourceUrl: next.source_url,
+          articleUrl: next.article_url,
+          summary: next.summary,
+          publishedAt: next.published_at,
+          articleText: articleContent.text,
+        });
+
+        reviewed++;
+
+        await adminSupabase
+          .from("incident_candidates")
+          .update({
+            ai_review_status: "completed",
+            ai_reviewed_at: new Date().toISOString(),
+            ai_is_incident: result.is_incident,
+            ai_confidence: result.confidence,
+            ai_recommendation: result.recommendation,
+            ai_company: result.company,
+            ai_model: result.model,
+            ai_category: result.category,
+            ai_severity: result.severity,
+            ai_incident_summary: result.incident_summary,
+            ai_incident_description: result.incident_description,
+            ai_intended_behavior: result.intended_behavior,
+            ai_observed_behavior: result.observed_behavior,
+            ai_scope_violation: result.scope_violation,
+            ai_evidence_summary: result.evidence_summary,
+            ai_evidence_quality: result.evidence_quality,
+            ai_reasoning: result.reasoning,
+            ai_additional_sources: result.additional_sources,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", next.id);
+
+        /*
+         * ------------------------------------------------------
+         * Auto-decide
+         * ------------------------------------------------------
+         */
+
+        const requiredFieldsPresent = Boolean(
+          result.company &&
+            result.severity &&
+            result.incident_summary &&
+            result.incident_description
+        );
+
+        if (
+          !result.is_incident ||
+          result.recommendation === "reject"
+        ) {
+          await adminSupabase
+            .from("incident_candidates")
+            .update({
+              status: "rejected",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", next.id);
+
+          autoRejected++;
+        } else if (
+          result.recommendation === "publish" &&
+          result.confidence >= MIN_AUTO_PUBLISH_CONFIDENCE &&
+          requiredFieldsPresent
+        ) {
+          const { error: publishError } =
+            await adminSupabase.rpc(
+              "publish_incident_candidate",
+              {
+                p_candidate_id: next.id,
+                p_title: next.title,
+                p_company: result.company as string,
+                p_model: result.model,
+                p_severity: result.severity as string,
+                p_category: result.category,
+                p_occurred_at: next.published_at,
+                p_summary: result.incident_summary as string,
+                p_description:
+                  result.incident_description as string,
+              }
+            );
+
+          if (publishError) {
+            console.error(
+              "Auto-publish failed, leaving for human review:",
+              publishError
+            );
+
+            await adminSupabase
+              .from("incident_candidates")
+              .update({
+                status: "reviewing",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", next.id);
+
+            leftForHuman++;
+          } else {
+            await adminSupabase
+              .from("incident_candidates")
+              .update({
+                status: "accepted",
+                updated_at: new Date().toISOString(),
+              })
+              .eq("id", next.id);
+
+            autoPublished++;
+          }
+        } else {
+          // "review" recommendation, low confidence, or missing
+          // fields required to publish — a human decides this one.
+          await adminSupabase
+            .from("incident_candidates")
+            .update({
+              status: "reviewing",
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", next.id);
+
+          leftForHuman++;
+        }
+      } catch (reviewError) {
+        console.error(
+          `Review failed for ${next.article_url}:`,
+          reviewError
+        );
+
+        reviewFailed++;
+
+        await adminSupabase
+          .from("incident_candidates")
+          .update({
+            status: "pending",
+            ai_review_status: "failed",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", next.id);
+      }
+    }
+
+    console.log(
+      [
+        "Batch review complete.",
+        `Reviewed ${reviewed}.`,
+        `Auto-published ${autoPublished}.`,
+        `Auto-rejected ${autoRejected}.`,
+        `Left for human ${leftForHuman}.`,
+        `Failed ${reviewFailed}.`,
+      ].join(" ")
+    );
+
+    /*
+     * ----------------------------------------------------------
      * 6. Mark discovery successful
      * ----------------------------------------------------------
      */
@@ -375,9 +636,6 @@ export async function POST(
         `Found ${candidates.length}.`,
         `Inserted ${inserted}.`,
         `Duplicates ${duplicates}.`,
-        `Article fetch success: ${fetchSuccesses}.`,
-        `Article fetch partial: ${fetchPartials}.`,
-        `Article fetch failed: ${fetchFailures}.`,
       ].join(" ")
     );
 
@@ -397,15 +655,12 @@ export async function POST(
 
       duplicates,
 
-      article_fetch: {
-        success:
-          fetchSuccesses,
-
-        partial:
-          fetchPartials,
-
-        failed:
-          fetchFailures,
+      review: {
+        reviewed,
+        auto_published: autoPublished,
+        auto_rejected: autoRejected,
+        left_for_human: leftForHuman,
+        failed: reviewFailed,
       },
     });
   } catch (error) {

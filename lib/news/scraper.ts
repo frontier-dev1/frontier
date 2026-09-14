@@ -133,6 +133,7 @@ export type DiscoveredNews = {
   article_text_length: number;
 
   article_fetch_status:
+    | "pending"
     | "success"
     | "partial"
     | "failed";
@@ -2050,39 +2051,18 @@ export async function discoverNews(): Promise<
 
         /*
          * ------------------------------------------------------
-         * Fetch actual article
-         * ------------------------------------------------------
-         */
-
-        console.log(
-          [
-            "[NEWS DISCOVERY]",
-            "Fetching article",
-            `Source: ${feedSource.name}`,
-            `Title: ${title}`,
-            `URL: ${articleUrl}`,
-          ].join(" | ")
-        );
-
-        const articleContent =
-          await fetchArticle(
-            articleUrl,
-            summary
-          );
-
-        /*
-         * ------------------------------------------------------
-         * Determine final URL
+         * Article content is fetched later, in a separate
+         * time-boxed batch step (see processPendingNews in
+         * the discover route). Discovery itself only parses
+         * RSS feeds, which is fast — fetching hundreds of
+         * article pages inline here is what made discovery
+         * take 10+ minutes and blew past serverless function
+         * time limits.
          * ------------------------------------------------------
          */
 
         const finalArticleUrl =
-          articleContent.resolvedUrl &&
-          !isGoogleNewsUrl(
-            articleContent.resolvedUrl
-          )
-            ? articleContent.resolvedUrl
-            : articleUrl;
+          articleUrl;
 
         /*
          * Never store a Google URL.
@@ -2156,19 +2136,19 @@ export async function discoverNews(): Promise<
               discoveredAt,
 
             article_text:
-              articleContent.text,
+              null,
 
             article_text_source:
-              articleContent.source,
+              null,
 
             article_text_fetched_at:
-              articleContent.fetchedAt,
+              null,
 
             article_text_length:
-              articleContent.length,
+              0,
 
             article_fetch_status:
-              articleContent.status,
+              "pending",
 
             relevance_score:
               finalScore,
@@ -2318,27 +2298,6 @@ export async function discoverNews(): Promise<
    * ==========================================================
    */
 
-  const successfulFetches =
-    unique.filter(
-      (item) =>
-        item.article_fetch_status ===
-        "success"
-    ).length;
-
-  const partialFetches =
-    unique.filter(
-      (item) =>
-        item.article_fetch_status ===
-        "partial"
-    ).length;
-
-  const failedFetches =
-    unique.filter(
-      (item) =>
-        item.article_fetch_status ===
-        "failed"
-    ).length;
-
   console.log(
     "============================================================"
   );
@@ -2356,15 +2315,7 @@ export async function discoverNews(): Promise<
   );
 
   console.log(
-    `Successful article fetches: ${successfulFetches}`
-  );
-
-  console.log(
-    `Partial article fetches: ${partialFetches}`
-  );
-
-  console.log(
-    `Failed article fetches: ${failedFetches}`
+    "Article content will be fetched during batch review."
   );
 
   console.log(

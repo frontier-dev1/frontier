@@ -1,231 +1,275 @@
 import { NextResponse } from "next/server";
 
-import { discoverNews } from "@/lib/news/scraper";
-import { reviewNewsArticle } from "@/lib/ai/news-reviewer";
+import {
+  discoverNews,
+  fetchArticle,
+} from "@/lib/news/scraper";
+
+import {
+  reviewNewsArticle,
+} from "@/lib/ai/news-reviewer";
+
 import { createAdminClient } from "@/lib/supabase/admin";
 
 export const dynamic = "force-dynamic";
 
-const MAX_AI_REVIEWS = 20;
+/*
+ * Vercel Hobby caps Serverless Function duration at 60s. We stop
+ * well before that so the platform never kills the request
+ * mid-write and leaves a candidate in a half-updated state.
+ */
+export const maxDuration = 60;
 
-export async function POST() {
+const TIME_BUDGET_MS = 45_000;
+const MIN_RELEVANCE_SCORE = 60;
+
+export async function POST(
+  request: Request
+) {
+  return runNewsDiscovery(request);
+}
+
+export async function GET(
+  request: Request
+) {
+  /*
+   * Vercel Cron Jobs always send a GET request and automatically
+   * attach `Authorization: Bearer $CRON_SECRET` if that env var is
+   * set on the project — this is what lets the schedule in
+   * vercel.json trigger this route without a logged-in admin.
+   */
+  return runNewsDiscovery(request);
+}
+
+async function runNewsDiscovery(
+  request: Request
+) {
   try {
-    const supabase = createAdminClient();
-
     /*
      * ---------------------------------------------------------
-     * 1. Discover articles
+     * 1. Authenticate admin
      * ---------------------------------------------------------
      */
 
-    const discovered = await discoverNews();
+    const supabase = createAdminClient();
+
+    const authorization =
+      request.headers.get(
+        "authorization"
+      );
+
+    const providedSecret =
+      authorization?.startsWith(
+        "Bearer "
+      )
+        ? authorization.slice(7)
+        : null;
+
+    const cronSecret =
+      process.env.FRONTIER_CRON_SECRET;
+
+    const vercelCronSecret =
+      process.env.CRON_SECRET;
+
+    const isCronRequest =
+      Boolean(
+        providedSecret &&
+          ((cronSecret &&
+            providedSecret === cronSecret) ||
+            (vercelCronSecret &&
+              providedSecret === vercelCronSecret))
+      );
+
+    if (!isCronRequest) {
+      /*
+       * The service-role client above cannot authenticate
+       * the browser user. Use the normal Supabase client.
+       */
+
+      const { createClient } =
+        await import(
+          "@/lib/supabase/server"
+        );
+
+      const userClient =
+        await createClient();
+
+      const {
+        data: { user },
+      } =
+        await userClient.auth.getUser();
+
+      if (!user) {
+        return NextResponse.json(
+          {
+            error:
+              "Authentication required.",
+          },
+          {
+            status: 401,
+          }
+        );
+      }
+
+      const {
+        data: admin,
+        error: adminError,
+      } =
+        await userClient
+          .from("admin_users")
+          .select("user_id")
+          .eq(
+            "user_id",
+            user.id
+          )
+          .maybeSingle();
+
+      if (adminError) {
+        console.error(
+          "Admin verification failed:",
+          adminError
+        );
+
+        return NextResponse.json(
+          {
+            error:
+              "Unable to verify administrator access.",
+          },
+          {
+            status: 500,
+          }
+        );
+      }
+
+      if (!admin) {
+        return NextResponse.json(
+          {
+            error:
+              "Administrator access required.",
+          },
+          {
+            status: 403,
+          }
+        );
+      }
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 2. Discover articles
+     * ---------------------------------------------------------
+     */
+
+    const discovered =
+      await discoverNews();
 
     console.log(
       `News discovery found ${discovered.length} articles.`
     );
 
+    let candidatesInserted = 0;
+    let duplicates = 0;
     let reviewed = 0;
     let published = 0;
     let rejected = 0;
-    let duplicates = 0;
     let failed = 0;
 
     /*
      * ---------------------------------------------------------
-     * 2. Review articles
+     * 3. Save discovered articles as candidates
      * ---------------------------------------------------------
-     *
-     * We deliberately limit the number of Gemini calls
-     * during a manual test.
      */
 
-    for (
-      const article of discovered.slice(
-        0,
-        MAX_AI_REVIEWS
-      )
-    ) {
+    for (const article of discovered) {
       try {
-        /*
-         * -----------------------------------------------------
-         * Check for existing article
-         * -----------------------------------------------------
-         */
-
         const {
-          data: existing,
-          error: existingError,
-        } = await supabase
-          .from("ai_news")
-          .select("id")
-          .eq(
-            "source_url",
-            article.source_url
-          )
-          .maybeSingle();
+          data: candidate,
+          error: candidateError,
+        } =
+          await supabase
+            .from(
+              "ai_news_candidates"
+            )
+            .upsert(
+              {
+                title:
+                  article.title,
 
-        if (existingError) {
+                source_name:
+                  article.source_name,
+
+                source_url:
+                  article.source_url,
+
+                article_url:
+                  article.article_url,
+
+                summary:
+                  article.summary,
+
+                published_at:
+                  article.published_at,
+
+                discovered_at:
+                  article.discovered_at,
+
+                article_text:
+                  article.article_text,
+
+                article_text_source:
+                  article.article_text_source,
+
+                article_text_fetched_at:
+                  article.article_text_fetched_at,
+
+                article_text_length:
+                  article.article_text_length,
+
+                article_fetch_status:
+                  article.article_fetch_status,
+
+                relevance_score:
+                  article.relevance_score,
+
+                matched_keywords:
+                  article.matched_keywords,
+
+                status:
+                  "pending",
+
+                updated_at:
+                  new Date().toISOString(),
+              },
+              {
+                onConflict:
+                  "article_url",
+
+                ignoreDuplicates:
+                  true,
+              }
+            )
+            .select("id")
+            .maybeSingle();
+
+        if (candidateError) {
           console.error(
-            "News duplicate check failed:",
-            existingError
+            "News candidate insert failed:",
+            candidateError
           );
 
           failed++;
           continue;
         }
 
-        if (existing) {
+        if (!candidate) {
           duplicates++;
           continue;
         }
 
-        /*
-         * -----------------------------------------------------
-         * AI review
-         * -----------------------------------------------------
-         */
-
-        const review =
-          await reviewNewsArticle({
-            title: article.title,
-
-            sourceName:
-              article.source_name,
-
-            sourceUrl:
-              article.source_url,
-
-            articleUrl:
-              article.article_url,
-
-            summary:
-              article.summary,
-
-            articleText:
-              article.article_text,
-          });
-
-        reviewed++;
-
-        /*
-         * -----------------------------------------------------
-         * Reject articles that don't meet the threshold
-         * -----------------------------------------------------
-         */
-
-        if (
-          !review.is_relevant ||
-          review.relevance_score < 60
-        ) {
-          rejected++;
-          continue;
-        }
-
-        /*
-         * -----------------------------------------------------
-         * Insert into ai_news
-         * -----------------------------------------------------
-         *
-         * IMPORTANT:
-         * These fields match the schema you provided.
-         */
-
-        const {
-          error: insertError,
-        } = await supabase
-          .from("ai_news")
-          .insert({
-            title:
-              review.title ||
-              article.title,
-
-            source_name:
-              review.company ||
-              article.source_name,
-
-            source_url:
-              article.source_url,
-
-            summary:
-              review.summary ||
-              article.summary,
-
-            category:
-              review.category,
-
-            published_at:
-              article.published_at,
-
-            image_url:
-              null,
-
-            article_url:
-              article.article_url,
-
-            article_text:
-              article.article_text,
-
-            article_text_source:
-              article.article_text_source,
-
-            article_text_fetched_at:
-              article.article_text_fetched_at,
-
-            article_text_length:
-              article.article_text_length,
-
-            article_fetch_status:
-              article.article_fetch_status,
-
-            ai_relevance_score:
-              review.relevance_score,
-
-            ai_summary:
-              review.summary,
-
-            ai_category:
-              review.category,
-
-            ai_company:
-              review.company,
-
-            ai_model:
-              review.model,
-
-            ai_importance:
-              review.importance,
-
-            ai_reasoning:
-              review.reasoning,
-
-            ai_reviewed_at:
-              new Date().toISOString(),
-
-            created_at:
-              new Date().toISOString(),
-
-            updated_at:
-              new Date().toISOString(),
-          });
-
-        if (insertError) {
-          console.error(
-            "News insert failed:",
-            insertError
-          );
-
-          failed++;
-          continue;
-        }
-
-        published++;
-
-        console.log(
-          `Published AI news: ${article.title}`
-        );
+        candidatesInserted++;
       } catch (error) {
         console.error(
-          `News processing failed for ${article.article_url}:`,
+          "News candidate processing failed:",
           error
         );
 
@@ -235,7 +279,342 @@ export async function POST() {
 
     /*
      * ---------------------------------------------------------
-     * 3. Return results
+     * 4. Review pending candidates until we run out, or run
+     *    out of safe time within this function invocation.
+     * ---------------------------------------------------------
+     */
+
+    const reviewStartedAt = Date.now();
+
+    while (
+      Date.now() - reviewStartedAt <
+      TIME_BUDGET_MS
+    ) {
+      const {
+        data: pending,
+        error: pendingError,
+      } =
+        await supabase
+          .from("ai_news_candidates")
+          .select("*")
+          .eq("status", "pending")
+          .order("relevance_score", {
+            ascending: false,
+            nullsFirst: false,
+          })
+          .limit(1);
+
+      if (pendingError) {
+        console.error(
+          "Unable to load news candidates:",
+          pendingError
+        );
+        break;
+      }
+
+      const candidate = pending?.[0];
+
+      if (!candidate) {
+        break;
+      }
+
+      try {
+        /*
+         * Mark reviewing.
+         */
+
+        await supabase
+          .from("ai_news_candidates")
+          .update({
+            status: "reviewing",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", candidate.id);
+
+        /*
+         * Discovery only stores RSS metadata — fetch the full
+         * article body now, right before reviewing it.
+         */
+
+        const articleContent =
+          await fetchArticle(
+            candidate.article_url,
+            candidate.summary
+          );
+
+        await supabase
+          .from("ai_news_candidates")
+          .update({
+            article_text: articleContent.text,
+            article_text_source: articleContent.source,
+            article_text_fetched_at: new Date().toISOString(),
+            article_text_length:
+              articleContent.text?.length ?? 0,
+            article_fetch_status: articleContent.status,
+          })
+          .eq("id", candidate.id);
+
+        /*
+         * Ask Gemini.
+         */
+
+        const review =
+          await reviewNewsArticle({
+            title:
+              candidate.title,
+
+            sourceName:
+              candidate.source_name ??
+              "Unknown",
+
+            sourceUrl:
+              candidate.source_url,
+
+            articleUrl:
+              candidate.article_url,
+
+            summary:
+              candidate.summary,
+
+            articleText:
+              articleContent.text,
+          });
+
+        reviewed++;
+
+        const now =
+          new Date().toISOString();
+
+        /*
+         * Save the AI assessment.
+         */
+
+        const shouldPublish =
+          review.is_relevant &&
+          review.relevance_score >=
+            MIN_RELEVANCE_SCORE;
+
+        const candidateStatus =
+          shouldPublish
+            ? "published"
+            : "rejected";
+
+        const {
+          error:
+            reviewUpdateError,
+        } =
+          await supabase
+            .from(
+              "ai_news_candidates"
+            )
+            .update({
+              status:
+                candidateStatus,
+
+              ai_is_relevant:
+                review.is_relevant,
+
+              ai_relevance_score:
+                review.relevance_score,
+
+              ai_title:
+                review.title,
+
+              ai_summary:
+                review.summary,
+
+              ai_category:
+                review.category,
+
+              ai_company:
+                review.company,
+
+              ai_model:
+                review.model,
+
+              ai_importance:
+                review.importance,
+
+              ai_reasoning:
+                review.reasoning,
+
+              ai_reviewed_at:
+                now,
+
+              updated_at:
+                now,
+            })
+            .eq(
+              "id",
+              candidate.id
+            );
+
+        if (reviewUpdateError) {
+          throw reviewUpdateError;
+        }
+
+        /*
+         * -----------------------------------------------------
+         * Publish automatically when approved.
+         * -----------------------------------------------------
+         */
+
+        if (shouldPublish) {
+          const {
+            error:
+              publishError,
+          } =
+            await supabase
+              .from("ai_news")
+              .upsert(
+                {
+                  title:
+                    review.title ||
+                    candidate.title,
+
+                  source_name:
+                    candidate.source_name ||
+                    "Unknown",
+
+                  source_url:
+                    candidate.source_url,
+
+                  article_url:
+                    candidate.article_url,
+
+                  summary:
+                    review.summary ||
+                    candidate.summary,
+
+                  category:
+                    review.category,
+
+                  published_at:
+                    candidate.published_at,
+
+                  article_text:
+                    candidate.article_text,
+
+                  article_text_source:
+                    candidate.article_text_source,
+
+                  article_text_fetched_at:
+                    candidate.article_text_fetched_at,
+
+                  article_text_length:
+                    candidate.article_text_length,
+
+                  article_fetch_status:
+                    candidate.article_fetch_status,
+
+                  ai_relevance_score:
+                    review.relevance_score,
+
+                  ai_summary:
+                    review.summary,
+
+                  ai_category:
+                    review.category,
+
+                  ai_company:
+                    review.company,
+
+                  ai_model:
+                    review.model,
+
+                  ai_importance:
+                    review.importance,
+
+                  ai_reasoning:
+                    review.reasoning,
+
+                  ai_reviewed_at:
+                    now,
+
+                  created_at:
+                    now,
+
+                  updated_at:
+                    now,
+                },
+                {
+                  onConflict:
+                    "source_url",
+
+                  ignoreDuplicates:
+                    true,
+                }
+              );
+
+          if (publishError) {
+            console.error(
+              "AI news publication failed:",
+              publishError
+            );
+
+            /*
+             * It was reviewed successfully but could
+             * not be published.
+             */
+
+            await supabase
+              .from(
+                "ai_news_candidates"
+              )
+              .update({
+                status:
+                  "failed",
+
+                updated_at:
+                  new Date().toISOString(),
+              })
+              .eq(
+                "id",
+                candidate.id
+              );
+
+            failed++;
+            continue;
+          }
+
+          published++;
+        } else {
+          rejected++;
+        }
+      } catch (error) {
+        console.error(
+          `News review failed for ${candidate.article_url}:`,
+          error
+        );
+
+        failed++;
+
+        await supabase
+          .from(
+            "ai_news_candidates"
+          )
+          .update({
+            status:
+              "failed",
+
+            ai_reasoning:
+              error instanceof Error
+                ? error.message
+                : "News review failed.",
+
+            updated_at:
+              new Date().toISOString(),
+          })
+          .eq(
+            "id",
+            candidate.id
+          );
+      }
+    }
+
+    /*
+     * ---------------------------------------------------------
+     * 6. Return discovery statistics
      * ---------------------------------------------------------
      */
 
@@ -245,18 +624,24 @@ export async function POST() {
       discovered:
         discovered.length,
 
+      candidates_inserted:
+        candidatesInserted,
+
+      duplicates,
+
       reviewed,
 
       published,
 
       rejected,
 
-      duplicates,
-
       failed,
 
-      maxReviews:
-        MAX_AI_REVIEWS,
+      time_budget_ms:
+        TIME_BUDGET_MS,
+
+      minimum_relevance_score:
+        MIN_RELEVANCE_SCORE,
     });
   } catch (error) {
     console.error(
@@ -266,8 +651,6 @@ export async function POST() {
 
     return NextResponse.json(
       {
-        success: false,
-
         error:
           error instanceof Error
             ? error.message
