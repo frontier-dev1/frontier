@@ -40,6 +40,8 @@ type RecommendationFilter =
 type SortOption =
   | "newest"
   | "oldest"
+  | "published_newest"
+  | "published_oldest"
   | "relevance"
   | "confidence"
   | "evidence";
@@ -56,6 +58,12 @@ const statusStyles: Record<string, string> = {
 
   rejected:
     "bg-slate-100 text-slate-500 border-slate-200",
+
+  duplicate:
+    "bg-purple-50 text-purple-700 border-purple-200",
+
+  converted_to_news:
+    "bg-purple-50 text-purple-700 border-purple-200",
 };
 
 const severityStyles: Record<string, string> = {
@@ -357,6 +365,30 @@ export default function CandidatesDashboard({
           new Date(
             b.discovered_at
           ).getTime()
+        );
+      }
+
+      if (
+        sortOption === "published_newest"
+      ) {
+        if (!a.published_at && !b.published_at) return 0;
+        if (!a.published_at) return 1;
+        if (!b.published_at) return -1;
+        return (
+          new Date(b.published_at).getTime() -
+          new Date(a.published_at).getTime()
+        );
+      }
+
+      if (
+        sortOption === "published_oldest"
+      ) {
+        if (!a.published_at && !b.published_at) return 0;
+        if (!a.published_at) return 1;
+        if (!b.published_at) return -1;
+        return (
+          new Date(a.published_at).getTime() -
+          new Date(b.published_at).getTime()
         );
       }
 
@@ -1211,6 +1243,70 @@ export default function CandidatesDashboard({
 
   /*
    * ------------------------------------------------------------
+   * Publish as News
+   * ------------------------------------------------------------
+   */
+
+  async function publishAsNews(
+    candidate: Candidate
+  ) {
+    const confirmed = window.confirm(
+      "Publish this as an AI News article instead of an incident?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      const response = await fetch(
+        `/api/admin/candidates/${candidate.id}/publish-as-news`,
+        {
+          method: "POST",
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error ||
+            "Unable to publish as news."
+        );
+      }
+
+      setCandidates((current) =>
+        current.map((item) =>
+          item.id === candidate.id
+            ? {
+                ...item,
+                status: "converted_to_news",
+                updated_at: new Date().toISOString(),
+              }
+            : item
+        )
+      );
+
+      setSelectedIds((current) => {
+        const next = new Set(current);
+        next.delete(candidate.id);
+        return next;
+      });
+
+      if (reviewingCandidate?.id === candidate.id) {
+        setReviewingCandidate(null);
+      }
+    } catch (error) {
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to publish as news."
+      );
+    }
+  }
+
+  /*
+   * ------------------------------------------------------------
    * Delete
    * ------------------------------------------------------------
    */
@@ -1621,6 +1717,14 @@ export default function CandidatesDashboard({
 
                 <option value="oldest">
                   Oldest discovered
+                </option>
+
+                <option value="published_newest">
+                  Newest published
+                </option>
+
+                <option value="published_oldest">
+                  Oldest published
                 </option>
 
                 <option value="relevance">
@@ -2240,6 +2344,27 @@ export default function CandidatesDashboard({
                           </button>
                         )}
 
+                        {candidate.status !==
+                          "accepted" &&
+                          candidate.status !==
+                            "rejected" &&
+                          candidate.status !==
+                            "converted_to_news" && (
+                          <button
+                            onClick={() =>
+                              publishAsNews(
+                                candidate
+                              )
+                            }
+                            disabled={
+                              batchReviewing
+                            }
+                            className="rounded-lg border border-purple-200 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                          >
+                            Publish as News
+                          </button>
+                        )}
+
                         <button
                           onClick={() =>
                             deleteCandidate(
@@ -2726,6 +2851,27 @@ export default function CandidatesDashboard({
                     className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
                   >
                     Reject
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={
+                      publishing
+                    }
+                    onClick={() => {
+                      if (
+                        reviewingCandidate
+                      ) {
+                        publishAsNews(
+                          reviewingCandidate
+                        );
+
+                        closeReview();
+                      }
+                    }}
+                    className="rounded-xl border border-purple-200 bg-purple-50 px-5 py-3 text-sm font-semibold text-purple-700 hover:bg-purple-100"
+                  >
+                    Publish as News
                   </button>
 
                   <button

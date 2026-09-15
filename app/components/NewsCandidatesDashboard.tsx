@@ -18,9 +18,15 @@ type StatusFilter =
   | "published"
   | "accepted"
   | "rejected"
+  | "duplicate"
   | "failed";
 
-type SortOption = "newest" | "oldest" | "relevance";
+type SortOption =
+  | "discovered_newest"
+  | "discovered_oldest"
+  | "published_newest"
+  | "published_oldest"
+  | "relevance";
 
 const statusStyles: Record<string, string> = {
   pending: "bg-blue-50 text-blue-700 border-blue-200",
@@ -28,6 +34,8 @@ const statusStyles: Record<string, string> = {
   published: "bg-green-50 text-green-700 border-green-200",
   accepted: "bg-green-50 text-green-700 border-green-200",
   rejected: "bg-slate-100 text-slate-500 border-slate-200",
+  duplicate: "bg-purple-50 text-purple-700 border-purple-200",
+  converted_to_incident: "bg-purple-50 text-purple-700 border-purple-200",
   failed: "bg-red-50 text-red-700 border-red-200",
 };
 
@@ -37,6 +45,7 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: "published", label: "Published" },
   { value: "accepted", label: "Accepted" },
   { value: "rejected", label: "Rejected" },
+  { value: "duplicate", label: "Duplicate" },
   { value: "failed", label: "Failed" },
   { value: "all", label: "All" },
 ];
@@ -51,7 +60,9 @@ export default function NewsCandidatesDashboard({
   const [filter, setFilter] = useState<StatusFilter>("pending");
   const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [sortOption, setSortOption] = useState<SortOption>("newest");
+  const [sortOption, setSortOption] = useState<SortOption>(
+    "discovered_newest"
+  );
 
   const [actionId, setActionId] = useState<string | null>(null);
   const [runningDiscovery, setRunningDiscovery] = useState(false);
@@ -67,6 +78,7 @@ export default function NewsCandidatesDashboard({
       published: 0,
       accepted: 0,
       rejected: 0,
+      duplicate: 0,
       failed: 0,
     };
 
@@ -112,18 +124,38 @@ export default function NewsCandidatesDashboard({
 
     const sorted = [...result];
 
-    if (sortOption === "newest") {
+    if (sortOption === "discovered_newest") {
       sorted.sort(
         (a, b) =>
           new Date(b.discovered_at).getTime() -
           new Date(a.discovered_at).getTime()
       );
-    } else if (sortOption === "oldest") {
+    } else if (sortOption === "discovered_oldest") {
       sorted.sort(
         (a, b) =>
           new Date(a.discovered_at).getTime() -
           new Date(b.discovered_at).getTime()
       );
+    } else if (sortOption === "published_newest") {
+      sorted.sort((a, b) => {
+        if (!a.published_at && !b.published_at) return 0;
+        if (!a.published_at) return 1;
+        if (!b.published_at) return -1;
+        return (
+          new Date(b.published_at).getTime() -
+          new Date(a.published_at).getTime()
+        );
+      });
+    } else if (sortOption === "published_oldest") {
+      sorted.sort((a, b) => {
+        if (!a.published_at && !b.published_at) return 0;
+        if (!a.published_at) return 1;
+        if (!b.published_at) return -1;
+        return (
+          new Date(a.published_at).getTime() -
+          new Date(b.published_at).getTime()
+        );
+      });
     } else if (sortOption === "relevance") {
       sorted.sort(
         (a, b) =>
@@ -161,8 +193,10 @@ export default function NewsCandidatesDashboard({
         } new, ${data.reviewed ?? 0} reviewed, ${
           data.published ?? 0
         } published, ${data.rejected ?? 0} rejected, ${
+          data.duplicate_articles ?? 0
+        } duplicate coverage skipped, ${
           data.duplicates ?? 0
-        } duplicates${data.failed ? `, ${data.failed} failed` : ""}.`
+        } duplicate URLs${data.failed ? `, ${data.failed} failed` : ""}.`
       );
 
       window.location.reload();
@@ -227,6 +261,42 @@ export default function NewsCandidatesDashboard({
     } catch (err) {
       console.error("Publish error:", err);
       alert(err instanceof Error ? err.message : "Publish failed.");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function handlePublishAsIncident(id: string) {
+    const severity = window.prompt(
+      "Severity for this incident (e.g. Critical, High, Moderate, Low):"
+    );
+
+    if (!severity) {
+      return;
+    }
+
+    setActionId(id);
+    try {
+      const res = await fetch(
+        `/api/admin/news-candidates/${id}/publish-as-incident`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ severity }),
+        }
+      );
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Publish as incident failed.");
+      }
+
+      updateCandidate(id, { status: "converted_to_incident" });
+    } catch (err) {
+      console.error("Publish as incident error:", err);
+      alert(
+        err instanceof Error ? err.message : "Publish as incident failed."
+      );
     } finally {
       setActionId(null);
     }
@@ -361,13 +431,14 @@ export default function NewsCandidatesDashboard({
 
         {/* Stats */}
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-7">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-8">
           <CandidateStat label="All" value={counts.all} />
           <CandidateStat label="Pending" value={counts.pending} color="blue" />
           <CandidateStat label="Reviewing" value={counts.reviewing} color="yellow" />
           <CandidateStat label="Published" value={counts.published} color="green" />
           <CandidateStat label="Accepted" value={counts.accepted} color="green" />
           <CandidateStat label="Rejected" value={counts.rejected} />
+          <CandidateStat label="Duplicate" value={counts.duplicate} />
           <CandidateStat label="Failed" value={counts.failed} />
         </div>
 
@@ -433,8 +504,10 @@ export default function NewsCandidatesDashboard({
                 onChange={(e) => setSortOption(e.target.value as SortOption)}
                 className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-blue-500"
               >
-                <option value="newest">Newest discovered</option>
-                <option value="oldest">Oldest discovered</option>
+                <option value="discovered_newest">Newest discovered</option>
+                <option value="discovered_oldest">Oldest discovered</option>
+                <option value="published_newest">Newest published</option>
+                <option value="published_oldest">Oldest published</option>
                 <option value="relevance">Relevance</option>
               </select>
             </div>
@@ -648,6 +721,18 @@ export default function NewsCandidatesDashboard({
                             : "Publish without review"}
                         </button>
                       )}
+
+                      {item.status !== "accepted" &&
+                        item.status !== "rejected" &&
+                        item.status !== "converted_to_incident" && (
+                          <button
+                            onClick={() => handlePublishAsIncident(item.id)}
+                            disabled={actionId === item.id}
+                            className="rounded-lg border border-purple-200 bg-purple-50 px-4 py-2 text-sm font-medium text-purple-700 hover:bg-purple-100 disabled:opacity-50"
+                          >
+                            Publish as Incident
+                          </button>
+                        )}
 
                       {item.status !== "accepted" &&
                         item.status !== "rejected" && (

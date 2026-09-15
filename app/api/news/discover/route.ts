@@ -26,6 +26,15 @@ const TIME_BUDGET_MS = 45_000;
 const MIN_RELEVANCE_SCORE = 60;
 
 /*
+ * The AI industry moves fast enough that news from before this
+ * date is judged not worth surfacing as "current" anymore, even
+ * if it's otherwise relevant and well-written. Articles with no
+ * known published_at are allowed through — we simply don't know
+ * their age, so it would be wrong to penalize them for it.
+ */
+const MIN_PUBLISHED_DATE = new Date("2026-04-01T00:00:00Z");
+
+/*
  * How similar two articles' titles+summaries need to be (same
  * company) to treat them as coverage of the same underlying story
  * rather than two separate news items.
@@ -399,7 +408,13 @@ async function runNewsDiscovery(
          * Save the AI assessment.
          */
 
+        const isTooOld = Boolean(
+          candidate.published_at &&
+            new Date(candidate.published_at) < MIN_PUBLISHED_DATE
+        );
+
         const shouldPublish =
+          !isTooOld &&
           review.is_relevant &&
           review.relevance_score >=
             MIN_RELEVANCE_SCORE;
@@ -487,6 +502,8 @@ async function runNewsDiscovery(
               ai_reasoning:
                 isDuplicate
                   ? `Duplicate coverage of "${duplicateOfTitle}" — not published separately.`
+                  : isTooOld
+                  ? `Published before the ${MIN_PUBLISHED_DATE.toISOString().slice(0, 10)} cutoff — not published as current news.`
                   : review.reasoning,
 
               ai_reviewed_at:

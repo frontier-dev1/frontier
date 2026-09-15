@@ -223,10 +223,23 @@ export default async function AINewsPage() {
                   article.ai_summary ||
                   article.summary;
 
+                const CardTag = articleLink
+                  ? "a"
+                  : "div";
+
+                const cardLinkProps = articleLink
+                  ? {
+                      href: articleLink,
+                      target: "_blank",
+                      rel: "noopener noreferrer",
+                    }
+                  : {};
+
                 return (
-                  <article
+                  <CardTag
                     key={article.id}
-                    className="group relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.045] p-6 transition duration-300 hover:-translate-y-1 hover:border-blue-400/30 hover:bg-white/[0.065]"
+                    className="group relative block overflow-hidden rounded-3xl border border-white/10 bg-white/[0.045] p-6 transition duration-300 hover:-translate-y-1 hover:border-blue-400/30 hover:bg-white/[0.065]"
+                    {...cardLinkProps}
                   >
 
                     {/* Accent */}
@@ -319,14 +332,9 @@ export default async function AINewsPage() {
                         </span>
 
                         {articleLink ? (
-                          <a
-                            href={articleLink}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-sm font-semibold text-blue-400 transition hover:text-blue-300"
-                          >
+                          <span className="text-sm font-semibold text-blue-400 transition group-hover:text-blue-300">
                             Read article ↗
-                          </a>
+                          </span>
                         ) : (
                           <span className="text-xs text-slate-600">
                             Source unavailable
@@ -337,7 +345,7 @@ export default async function AINewsPage() {
 
                     </div>
 
-                  </article>
+                  </CardTag>
                 );
               }
             )}

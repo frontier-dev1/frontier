@@ -175,7 +175,10 @@ function IncidentCard({
       : "border-white/10 bg-white/5 text-slate-400";
 
   return (
-    <article className="group rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition hover:border-blue-400/30 hover:bg-white/[0.045] lg:p-7">
+    <Link
+      href={`/incidents/${incident.id}`}
+      className="group block rounded-2xl border border-white/10 bg-white/[0.03] p-6 transition hover:border-blue-400/30 hover:bg-white/[0.045] lg:p-7"
+    >
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -226,15 +229,12 @@ function IncidentCard({
         </div>
 
         <div className="shrink-0">
-          <Link
-            href={`/incidents/${incident.id}`}
-            className="inline-flex rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-200 transition hover:border-blue-400/30 hover:bg-blue-400/10 hover:text-white"
-          >
+          <span className="inline-flex rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm font-semibold text-slate-200 transition group-hover:border-blue-400/30 group-hover:bg-blue-400/10 group-hover:text-white">
             View incident →
-          </Link>
+          </span>
         </div>
       </div>
-    </article>
+    </Link>
   );
 }
 

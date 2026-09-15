@@ -10,15 +10,15 @@ const FOOTER_LINKS = [
 export function SiteFooter() {
   return (
     <footer className="border-t border-white/10">
-      <div className="mx-auto flex max-w-7xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-8">
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-4 px-6 py-8 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between lg:px-8">
         <span>© {new Date().getFullYear()} Frontier</span>
 
-        <div className="flex gap-5">
+        <div className="flex flex-wrap gap-x-5 gap-y-2">
           {FOOTER_LINKS.map((item) => (
             <Link
               key={item.href}
               href={item.href}
-              className="transition hover:text-white"
+              className="py-1 transition hover:text-white"
             >
               {item.label}
             </Link>
