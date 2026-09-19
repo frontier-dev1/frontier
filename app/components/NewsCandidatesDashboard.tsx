@@ -15,11 +15,8 @@ type StatusFilter =
   | "all"
   | "pending"
   | "reviewing"
-  | "published"
   | "accepted"
-  | "rejected"
-  | "duplicate"
-  | "failed";
+  | "rejected";
 
 type SortOption =
   | "discovered_newest"
@@ -31,22 +28,15 @@ type SortOption =
 const statusStyles: Record<string, string> = {
   pending: "bg-blue-50 text-blue-700 border-blue-200",
   reviewing: "bg-yellow-50 text-yellow-700 border-yellow-200",
-  published: "bg-green-50 text-green-700 border-green-200",
   accepted: "bg-green-50 text-green-700 border-green-200",
   rejected: "bg-slate-100 text-slate-500 border-slate-200",
-  duplicate: "bg-purple-50 text-purple-700 border-purple-200",
-  converted_to_incident: "bg-purple-50 text-purple-700 border-purple-200",
-  failed: "bg-red-50 text-red-700 border-red-200",
 };
 
 const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: "pending", label: "Pending" },
   { value: "reviewing", label: "Reviewing" },
-  { value: "published", label: "Published" },
   { value: "accepted", label: "Accepted" },
   { value: "rejected", label: "Rejected" },
-  { value: "duplicate", label: "Duplicate" },
-  { value: "failed", label: "Failed" },
   { value: "all", label: "All" },
 ];
 
@@ -75,11 +65,8 @@ export default function NewsCandidatesDashboard({
       all: candidates.length,
       pending: 0,
       reviewing: 0,
-      published: 0,
       accepted: 0,
       rejected: 0,
-      duplicate: 0,
-      failed: 0,
     };
 
     for (const candidate of candidates) {
@@ -291,7 +278,7 @@ export default function NewsCandidatesDashboard({
         throw new Error(data.error || "Publish as incident failed.");
       }
 
-      updateCandidate(id, { status: "converted_to_incident" });
+      updateCandidate(id, { status: "accepted" });
     } catch (err) {
       console.error("Publish as incident error:", err);
       alert(
@@ -431,15 +418,12 @@ export default function NewsCandidatesDashboard({
 
         {/* Stats */}
 
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-8">
+        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <CandidateStat label="All" value={counts.all} />
           <CandidateStat label="Pending" value={counts.pending} color="blue" />
           <CandidateStat label="Reviewing" value={counts.reviewing} color="yellow" />
-          <CandidateStat label="Published" value={counts.published} color="green" />
           <CandidateStat label="Accepted" value={counts.accepted} color="green" />
           <CandidateStat label="Rejected" value={counts.rejected} />
-          <CandidateStat label="Duplicate" value={counts.duplicate} />
-          <CandidateStat label="Failed" value={counts.failed} />
         </div>
 
         {/* Status filters */}
@@ -723,8 +707,7 @@ export default function NewsCandidatesDashboard({
                       )}
 
                       {item.status !== "accepted" &&
-                        item.status !== "rejected" &&
-                        item.status !== "converted_to_incident" && (
+                        item.status !== "rejected" && (
                           <button
                             onClick={() => handlePublishAsIncident(item.id)}
                             disabled={actionId === item.id}

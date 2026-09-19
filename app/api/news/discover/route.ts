@@ -305,6 +305,15 @@ async function runNewsDiscovery(
 
     const reviewStartedAt = Date.now();
 
+    /*
+     * Groq's free tier allows 30 requests/minute. Reviewing
+     * candidates back-to-back with no pacing can burst past that
+     * within seconds. Spacing calls out keeps this run smooth
+     * instead of hitting 429s partway through.
+     */
+    const MIN_MS_BETWEEN_REVIEWS = 2_100;
+    let lastReviewCallAt = 0;
+
     while (
       Date.now() - reviewStartedAt <
       TIME_BUDGET_MS
@@ -374,8 +383,23 @@ async function runNewsDiscovery(
           .eq("id", candidate.id);
 
         /*
-         * Ask Gemini.
+         * Ask the AI reviewer, paced to stay under the free
+         * tier's requests-per-minute limit.
          */
+
+        const msSinceLastCall =
+          Date.now() - lastReviewCallAt;
+
+        if (msSinceLastCall < MIN_MS_BETWEEN_REVIEWS) {
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              MIN_MS_BETWEEN_REVIEWS - msSinceLastCall
+            )
+          );
+        }
+
+        lastReviewCallAt = Date.now();
 
         const review =
           await reviewNewsArticle({
@@ -458,9 +482,9 @@ async function runNewsDiscovery(
 
         const candidateStatus =
           isDuplicate
-            ? "duplicate"
+            ? "rejected"
             : shouldPublish
-            ? "published"
+            ? "accepted"
             : "rejected";
 
         const {
@@ -531,13 +555,25 @@ async function runNewsDiscovery(
         if (isDuplicate) {
           duplicateArticles++;
         } else if (shouldPublish) {
+          const { data: existingArticle } =
+            await supabase
+              .from("ai_news")
+              .select("id")
+              .eq("source_url", candidate.source_url)
+              .maybeSingle();
+
+          if (existingArticle) {
+            duplicateArticles++;
+            continue;
+          }
+
           const {
             error:
               publishError,
           } =
             await supabase
               .from("ai_news")
-              .upsert(
+              .insert(
                 {
                   title:
                     review.title ||
@@ -607,13 +643,6 @@ async function runNewsDiscovery(
 
                   updated_at:
                     now,
-                },
-                {
-                  onConflict:
-                    "source_url",
-
-                  ignoreDuplicates:
-                    true,
                 }
               );
 
@@ -653,6 +682,20 @@ async function runNewsDiscovery(
           rejected++;
         }
       } catch (error) {
+        const errorMessage =
+          error instanceof Error
+            ? error.message
+            : "News review failed.";
+
+        const isRateLimit =
+          errorMessage.includes("429") ||
+          errorMessage
+            .toLowerCase()
+            .includes("rate limit") ||
+          errorMessage
+            .toLowerCase()
+            .includes("quota");
+
         console.error(
           `News review failed for ${candidate.article_url}:`,
           error
@@ -665,13 +708,14 @@ async function runNewsDiscovery(
             "ai_news_candidates"
           )
           .update({
+            // "failed" isn't an allowed status value in this
+            // table — put it back to pending so it's retried
+            // on a future run rather than getting stuck.
             status:
-              "failed",
+              "pending",
 
             ai_reasoning:
-              error instanceof Error
-                ? error.message
-                : "News review failed.",
+              errorMessage,
 
             updated_at:
               new Date().toISOString(),
@@ -680,6 +724,13 @@ async function runNewsDiscovery(
             "id",
             candidate.id
           );
+
+        if (isRateLimit) {
+          console.log(
+            "Rate limited — stopping this run early instead of retrying into the same wall."
+          );
+          break;
+        }
       }
     }
 

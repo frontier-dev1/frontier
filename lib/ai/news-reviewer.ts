@@ -1,7 +1,3 @@
-import {
-  GoogleGenerativeAI,
-} from "@google/generative-ai";
-
 export type NewsReviewResult = {
   is_relevant: boolean;
   relevance_score: number;
@@ -21,26 +17,36 @@ export type NewsReviewResult = {
   reasoning: string;
 };
 
-const apiKey =
-  process.env.GEMINI_API_KEY;
+/*
+ * ------------------------------------------------------------
+ * Groq instead of Gemini
+ * ------------------------------------------------------------
+ *
+ * Gemini's free tier caps out at 15 requests/minute, which a
+ * backlog of hundreds of candidates blows through almost
+ * immediately. Groq's free tier allows 30 requests/minute and
+ * 14,400 requests/day, no credit card required, using an
+ * OpenAI-compatible REST API — so this is a plain fetch() call,
+ * no new SDK dependency needed.
+ *
+ * Get a free key at https://console.groq.com and set it as
+ * GROQ_API_KEY in your environment.
+ */
+
+const apiKey = process.env.GROQ_API_KEY;
 
 if (!apiKey) {
   throw new Error(
-    "GEMINI_API_KEY is not configured."
+    "GROQ_API_KEY is not configured."
   );
 }
 
-const genAI =
-  new GoogleGenerativeAI(
-    apiKey
-  );
+const GROQ_MODEL =
+  process.env.GROQ_MODEL ??
+  "llama-3.3-70b-versatile";
 
-const model =
-  genAI.getGenerativeModel({
-    model:
-      process.env.GEMINI_MODEL ??
-      "gemini-3.5-flash-lite",
-  });
+const GROQ_API_URL =
+  "https://api.groq.com/openai/v1/chat/completions";
 
 export async function reviewNewsArticle({
   title,
@@ -182,23 +188,52 @@ importance:
 
 reasoning:
 Briefly explain why the article is or is not important enough for Frontier.
+
+Respond with JSON only.
 `;
 
-  const result =
-    await model.generateContent(
-      prompt
-  );
+  const response = await fetch(GROQ_API_URL, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
+      temperature: 0.2,
+      response_format: {
+        type: "json_object",
+      },
+    }),
+  });
 
-  const text =
-    result.response
+  if (!response.ok) {
+    const errorBody = await response
       .text()
-      .trim();
+      .catch(() => "");
+
+    throw new Error(
+      `Groq API error (${response.status}): ${errorBody}`
+    );
+  }
+
+  const data = await response.json();
+
+  const text: string =
+    data?.choices?.[0]?.message?.content?.trim() ??
+    "";
 
   let parsed: NewsReviewResult;
 
   try {
     /*
-     * Gemini occasionally wraps JSON in markdown
+     * Occasionally models wrap JSON in markdown
      * code fences. Remove them before parsing.
      */
     const cleanedText =
@@ -212,12 +247,12 @@ Briefly explain why the article is or is not important enough for Frontier.
       JSON.parse(cleanedText);
   } catch {
     console.error(
-      "Invalid Gemini news review response:",
+      "Invalid Groq news review response:",
       text
     );
 
     throw new Error(
-      "Gemini returned invalid JSON for the news review."
+      "Groq returned invalid JSON for the news review."
     );
   }
 
@@ -332,7 +367,7 @@ Briefly explain why the article is or is not important enough for Frontier.
   /*
    * Keep is_relevant consistent with the score.
    *
-   * This prevents Gemini from returning something
+   * This prevents the model from returning something
    * like:
    *
    * is_relevant: false

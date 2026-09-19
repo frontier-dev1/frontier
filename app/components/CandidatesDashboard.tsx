@@ -58,12 +58,6 @@ const statusStyles: Record<string, string> = {
 
   rejected:
     "bg-slate-100 text-slate-500 border-slate-200",
-
-  duplicate:
-    "bg-purple-50 text-purple-700 border-purple-200",
-
-  converted_to_news:
-    "bg-purple-50 text-purple-700 border-purple-200",
 };
 
 const severityStyles: Record<string, string> = {
@@ -1280,7 +1274,7 @@ export default function CandidatesDashboard({
           item.id === candidate.id
             ? {
                 ...item,
-                status: "converted_to_news",
+                status: "accepted",
                 updated_at: new Date().toISOString(),
               }
             : item
@@ -2347,9 +2341,7 @@ export default function CandidatesDashboard({
                         {candidate.status !==
                           "accepted" &&
                           candidate.status !==
-                            "rejected" &&
-                          candidate.status !==
-                            "converted_to_news" && (
+                            "rejected" && (
                           <button
                             onClick={() =>
                               publishAsNews(

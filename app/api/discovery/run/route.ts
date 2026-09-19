@@ -567,7 +567,7 @@ async function runDiscovery(
             await adminSupabase
               .from("incident_candidates")
               .update({
-                status: "duplicate",
+                status: "accepted",
                 notes: `Merged as an additional source into incident "${duplicateMatch.item.title}" (${duplicateMatch.item.id}), similarity ${duplicateMatch.score.toFixed(2)}.`,
                 updated_at: new Date().toISOString(),
               })
