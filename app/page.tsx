@@ -77,7 +77,7 @@ export default async function HomePage() {
 
             <p className="mt-6 max-w-2xl text-xl leading-8 text-slate-400">
               Frontier tracks significant incidents involving
-              artificial intelligence systems — from unexpected
+              artificial intelligence systems: from unexpected
               behavior and unauthorized actions to security,
               safety, and alignment failures.
             </p>
