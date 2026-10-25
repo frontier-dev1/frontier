@@ -81,3 +81,31 @@ export function findBestMatch<T>(
 
   return best;
 }
+
+/**
+ * Returns the top N candidates by text similarity, regardless of
+ * how low that similarity is — used as a cheap shortlist to hand
+ * off to an AI judge for the real "is this actually a duplicate"
+ * decision. Word-overlap alone is too unreliable to gate on: two
+ * articles about the exact same event can share almost no words
+ * if written by different outlets, so filtering by a hard
+ * threshold here would throw away real duplicates before the more
+ * accurate check ever sees them. Zero-score candidates are still
+ * excluded, since sending completely unrelated items to the AI
+ * judge just wastes tokens.
+ */
+export function topMatches<T>(
+  target: string,
+  candidates: T[],
+  getText: (item: T) => string,
+  topN: number
+): { item: T; score: number }[] {
+  return candidates
+    .map((item) => ({
+      item,
+      score: textSimilarity(target, getText(item)),
+    }))
+    .filter((match) => match.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, topN);
+}

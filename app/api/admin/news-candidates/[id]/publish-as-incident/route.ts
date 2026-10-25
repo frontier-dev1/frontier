@@ -150,7 +150,7 @@ export async function POST(
     const { error: updateError } = await adminSupabase
       .from("ai_news_candidates")
       .update({
-        status: "converted_to_incident",
+        status: "accepted",
         ai_reasoning: `Published as incident ${incidentId} by admin.`,
         updated_at: new Date().toISOString(),
       })

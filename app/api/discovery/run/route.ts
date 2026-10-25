@@ -9,7 +9,8 @@ import {
 } from "../../../../lib/discovery/scraper";
 
 import { reviewCandidate } from "../../../../lib/ai/reviewer";
-import { findBestMatch } from "../../../../lib/duplicate-detection";
+import { topMatches } from "../../../../lib/duplicate-detection";
+import { judgeDuplicate } from "../../../../lib/ai/duplicate-judge";
 
 export const dynamic = "force-dynamic";
 
@@ -31,13 +32,6 @@ const TIME_BUDGET_MS = 45_000;
  * miscategorized news article.
  */
 const MIN_AUTO_PUBLISH_CONFIDENCE = 80;
-
-/*
- * How similar two incidents' summaries need to be (same company)
- * to treat them as the same underlying event rather than two
- * separate incidents.
- */
-const DUPLICATE_SIMILARITY_THRESHOLD = 0.35;
 
 export async function POST(
   request: Request
@@ -370,6 +364,31 @@ async function runDiscovery(
 
     const reviewStartedAt = Date.now();
 
+    /*
+     * Groq's free tier allows 30 requests/minute, and each
+     * candidate here can use up to two calls (review, and
+     * duplicate judgment for publish-eligible ones). Pacing
+     * both keeps a run smooth instead of hitting 429s partway
+     * through.
+     */
+    const MIN_MS_BETWEEN_CALLS = 2_100;
+    let lastGroqCallAt = 0;
+
+    async function waitForRateLimit() {
+      const msSinceLastCall = Date.now() - lastGroqCallAt;
+
+      if (msSinceLastCall < MIN_MS_BETWEEN_CALLS) {
+        await new Promise((resolve) =>
+          setTimeout(
+            resolve,
+            MIN_MS_BETWEEN_CALLS - msSinceLastCall
+          )
+        );
+      }
+
+      lastGroqCallAt = Date.now();
+    }
+
     let reviewed = 0;
 
     let autoPublished = 0;
@@ -442,6 +461,8 @@ async function runDiscovery(
             article_fetch_status: articleContent.status,
           })
           .eq("id", next.id);
+
+        await waitForRateLimit();
 
         const result = await reviewCandidate({
           title: next.title,
@@ -516,30 +537,70 @@ async function runDiscovery(
            * Duplicate check
            * --------------------------------------------------
            *
-           * Different publishers often cover the same incident.
-           * Before creating a new incident, check whether an
-           * existing one from the same company already describes
-           * the same event. If so, attach this article as an
-           * additional source instead of publishing a duplicate.
+           * Different publishers often cover the same incident
+           * with very different wording, so this doesn't gate
+           * on the "company" field matching exactly (extraction
+           * varies between review passes) or rely on word-overlap
+           * alone (different outlets share almost no words
+           * describing the same event). Pull a pool of recent
+           * incidents regardless of company, cheaply shortlist
+           * the most textually similar few, then ask an LLM to
+           * make the actual same-event judgment. If it's the
+           * same event, attach this article as an additional
+           * source instead of publishing a duplicate incident.
            */
 
-          const { data: sameCompanyIncidents } =
+          const { data: recentIncidents } =
             await adminSupabase
               .from("incidents")
               .select(
                 "id, title, summary, description, additional_sources"
               )
-              .ilike("company", result.company as string)
               .order("created_at", { ascending: false })
-              .limit(15);
+              .limit(40);
 
-          const duplicateMatch = findBestMatch(
+          const shortlist = topMatches(
             `${result.incident_summary} ${result.incident_description}`,
-            sameCompanyIncidents ?? [],
+            recentIncidents ?? [],
             (incident) =>
               `${incident.summary} ${incident.description}`,
-            DUPLICATE_SIMILARITY_THRESHOLD
+            5
           );
+
+          let duplicateMatch:
+            | { item: (typeof shortlist)[number]["item"]; score: number }
+            | null = null;
+
+          if (shortlist.length > 0) {
+            try {
+              await waitForRateLimit();
+
+              const judgment = await judgeDuplicate({
+                newTitle: next.title,
+                newSummary: `${result.incident_summary} ${result.incident_description}`,
+                candidates: shortlist.map((m) => ({
+                  id: m.item.id,
+                  title: m.item.title,
+                  summary: `${m.item.summary} ${m.item.description}`,
+                })),
+              });
+
+              if (judgment.is_duplicate) {
+                const matched = shortlist.find(
+                  (m) => m.item.id === judgment.matching_id
+                );
+
+                if (matched) {
+                  duplicateMatch = matched;
+                }
+              }
+            } catch (judgeError) {
+              console.error(
+                "Duplicate judgment failed, proceeding as a new incident:",
+                judgeError
+              );
+            }
+          }
 
           if (duplicateMatch) {
             const existingSources = Array.isArray(
@@ -568,7 +629,7 @@ async function runDiscovery(
               .from("incident_candidates")
               .update({
                 status: "accepted",
-                notes: `Merged as an additional source into incident "${duplicateMatch.item.title}" (${duplicateMatch.item.id}), similarity ${duplicateMatch.score.toFixed(2)}.`,
+                notes: `Merged as an additional source into incident "${duplicateMatch.item.title}" (${duplicateMatch.item.id}).`,
                 updated_at: new Date().toISOString(),
               })
               .eq("id", next.id);

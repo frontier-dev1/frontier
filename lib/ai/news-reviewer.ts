@@ -33,14 +33,6 @@ export type NewsReviewResult = {
  * GROQ_API_KEY in your environment.
  */
 
-const apiKey = process.env.GROQ_API_KEY;
-
-if (!apiKey) {
-  throw new Error(
-    "GROQ_API_KEY is not configured."
-  );
-}
-
 const GROQ_MODEL =
   process.env.GROQ_MODEL ??
   "llama-3.3-70b-versatile";
@@ -63,6 +55,14 @@ export async function reviewNewsArticle({
   summary: string | null;
   articleText: string | null;
 }): Promise<NewsReviewResult> {
+
+  const apiKey = process.env.GROQ_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "GROQ_API_KEY is not configured."
+    );
+  }
 
   const articleContent =
     articleText?.trim() ||

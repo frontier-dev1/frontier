@@ -74,54 +74,71 @@ export async function POST(
 
     const now = new Date().toISOString();
 
-    const { error: upsertError } = await adminSupabase
-      .from("ai_news")
-      .upsert(
-        {
-          title: candidate.title,
-          source_name:
-            candidate.source_name || "Unknown",
-          source_url: candidate.source_url,
-          article_url: candidate.article_url,
-          summary,
-          category: candidate.ai_category,
-          published_at: candidate.published_at,
-          article_text: candidate.article_text,
-          article_text_source:
-            candidate.article_text_source,
-          article_text_fetched_at:
-            candidate.article_text_fetched_at,
-          article_text_length:
-            candidate.article_text_length ?? 0,
-          article_fetch_status:
-            candidate.article_fetch_status || "success",
-          ai_summary: summary,
-          ai_category: candidate.ai_category,
-          ai_company: candidate.ai_company,
-          ai_model: candidate.ai_model,
-          ai_reasoning:
-            "Published from an incident candidate by admin.",
-          ai_reviewed_at: now,
-          created_at: now,
-          updated_at: now,
-        },
-        {
-          onConflict: "source_url",
-          ignoreDuplicates: true,
-        }
-      );
+    /*
+     * Check for an existing article with this URL ourselves,
+     * rather than relying on an upsert's ON CONFLICT — that
+     * requires a unique constraint on the target column, which
+     * this table doesn't have.
+     */
 
-    if (upsertError) {
+    const { data: existingArticle } = await adminSupabase
+      .from("ai_news")
+      .select("id")
+      .eq("source_url", candidate.source_url)
+      .maybeSingle();
+
+    if (existingArticle) {
+      return NextResponse.json(
+        {
+          error:
+            "An AI News article with this source URL already exists.",
+        },
+        { status: 409 }
+      );
+    }
+
+    const { error: insertError } = await adminSupabase
+      .from("ai_news")
+      .insert({
+        title: candidate.title,
+        source_name:
+          candidate.source_name || "Unknown",
+        source_url: candidate.source_url,
+        article_url: candidate.article_url,
+        summary,
+        category: candidate.ai_category,
+        published_at: candidate.published_at,
+        article_text: candidate.article_text,
+        article_text_source:
+          candidate.article_text_source,
+        article_text_fetched_at:
+          candidate.article_text_fetched_at,
+        article_text_length:
+          candidate.article_text_length ?? 0,
+        article_fetch_status:
+          candidate.article_fetch_status || "success",
+        ai_summary: summary,
+        ai_category: candidate.ai_category,
+        ai_company: candidate.ai_company,
+        ai_model: candidate.ai_model,
+        ai_reasoning:
+          "Published from an incident candidate by admin.",
+        ai_reviewed_at: now,
+        created_at: now,
+        updated_at: now,
+      });
+
+    if (insertError) {
       console.error(
         "Failed to publish incident candidate as news:",
-        upsertError
+        insertError
       );
 
       return NextResponse.json(
         {
           error:
             "Could not publish as a news article. " +
-            upsertError.message,
+            insertError.message,
         },
         { status: 500 }
       );
@@ -130,7 +147,7 @@ export async function POST(
     const { error: updateError } = await adminSupabase
       .from("incident_candidates")
       .update({
-        status: "converted_to_news",
+        status: "accepted",
         notes: "Published as an AI News article by admin.",
         updated_at: now,
       })

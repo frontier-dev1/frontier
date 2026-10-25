@@ -1885,15 +1885,33 @@ export async function discoverNews(): Promise<
     "============================================================"
   );
 
+  const feeds = await Promise.all(
+    NEWS_RSS_FEEDS.map(async (feedSource) => {
+      try {
+        return await parser.parseURL(feedSource.url);
+      } catch (error) {
+        console.error(
+          [
+            "[NEWS DISCOVERY]",
+            `Failed to process feed: ${feedSource.name}`,
+            error instanceof Error
+              ? error.message
+              : String(error),
+          ].join(" | ")
+        );
+
+        return null;
+      }
+    })
+  );
+
   /*
    * ----------------------------------------------------------
    * Process each RSS feed independently
    * ----------------------------------------------------------
    */
 
-  for (
-    const feedSource of NEWS_RSS_FEEDS
-  ) {
+  for (const [feedIndex, feedSource] of NEWS_RSS_FEEDS.entries()) {
     console.log(
       [
         "",
@@ -1905,14 +1923,11 @@ export async function discoverNews(): Promise<
     );
 
     try {
-      /*
-       * THIS is the correct rss-parser usage.
-       */
+      const feed = feeds[feedIndex];
 
-      const feed =
-        await parser.parseURL(
-          feedSource.url
-        );
+      if (!feed) {
+        continue;
+      }
 
       console.log(
         `${feedSource.name}: ${feed.items.length} RSS items found.`

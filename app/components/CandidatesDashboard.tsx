@@ -156,6 +156,24 @@ export default function CandidatesDashboard({
   const [batchMessage, setBatchMessage] =
     useState("");
 
+  const [showAddCandidate, setShowAddCandidate] =
+    useState(false);
+
+  const [addCandidateForm, setAddCandidateForm] =
+    useState({
+      title: "",
+      article_url: "",
+      source_name: "",
+      summary: "",
+      published_at: "",
+    });
+
+  const [addingCandidate, setAddingCandidate] =
+    useState(false);
+
+  const [addCandidateError, setAddCandidateError] =
+    useState("");
+
   /*
    * ------------------------------------------------------------
    * Candidate counts
@@ -595,6 +613,83 @@ export default function CandidatesDashboard({
     setRunningDiscovery(false);
   }
 }
+
+  /*
+   * ------------------------------------------------------------
+   * Manually add a candidate
+   * ------------------------------------------------------------
+   *
+   * For stories the discovery engine's RSS feeds don't pick up —
+   * paste in a URL and it enters the same pending queue as
+   * anything discovered automatically, ready for AI review.
+   */
+
+  async function submitAddCandidate() {
+    setAddCandidateError("");
+
+    if (!addCandidateForm.title.trim()) {
+      setAddCandidateError("Title is required.");
+      return;
+    }
+
+    if (!addCandidateForm.article_url.trim()) {
+      setAddCandidateError("Article URL is required.");
+      return;
+    }
+
+    setAddingCandidate(true);
+
+    try {
+      const response = await fetch(
+        "/api/admin/candidates/create",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            title: addCandidateForm.title,
+            article_url: addCandidateForm.article_url,
+            source_name: addCandidateForm.source_name,
+            summary: addCandidateForm.summary,
+            published_at:
+              addCandidateForm.published_at || null,
+          }),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          result.error || "Could not add candidate."
+        );
+      }
+
+      setCandidates((current) => [
+        result.candidate,
+        ...current,
+      ]);
+
+      setAddCandidateForm({
+        title: "",
+        article_url: "",
+        source_name: "",
+        summary: "",
+        published_at: "",
+      });
+
+      setShowAddCandidate(false);
+    } catch (error) {
+      setAddCandidateError(
+        error instanceof Error
+          ? error.message
+          : "Could not add candidate."
+      );
+    } finally {
+      setAddingCandidate(false);
+    }
+  }
 
   /*
    * ------------------------------------------------------------
@@ -1489,6 +1584,13 @@ export default function CandidatesDashboard({
             {runningDiscovery
               ? "Scanning news..."
               : "Run News Discovery"}
+          </button>
+
+          <button
+            onClick={() => setShowAddCandidate(true)}
+            className="rounded-xl border border-slate-300 bg-white px-5 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+          >
+            + Add Candidate
           </button>
 
         </div>
@@ -2389,6 +2491,175 @@ export default function CandidatesDashboard({
       {/* -------------------------------------------------------
           Review modal
           ------------------------------------------------------- */}
+
+      {showAddCandidate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">
+
+          <div className="max-h-[92vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl">
+
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+
+              <div>
+
+                <div className="text-xs font-bold uppercase tracking-wider text-blue-600">
+                  Manual entry
+                </div>
+
+                <h2 className="mt-1 text-xl font-bold text-slate-950">
+                  Add candidate
+                </h2>
+
+                <p className="mt-1 text-sm text-slate-500">
+                  For stories the discovery engine missed. This
+                  enters the same pending queue as anything
+                  discovered automatically.
+                </p>
+
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowAddCandidate(false);
+                  setAddCandidateError("");
+                }}
+                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+              >
+                ✕
+              </button>
+
+            </div>
+
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                submitAddCandidate();
+              }}
+              className="space-y-4 p-6"
+            >
+
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Title *
+                </label>
+                <input
+                  value={addCandidateForm.title}
+                  onChange={(e) =>
+                    setAddCandidateForm((f) => ({
+                      ...f,
+                      title: e.target.value,
+                    }))
+                  }
+                  placeholder="Headline or a short description of what happened"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Article URL *
+                </label>
+                <input
+                  value={addCandidateForm.article_url}
+                  onChange={(e) =>
+                    setAddCandidateForm((f) => ({
+                      ...f,
+                      article_url: e.target.value,
+                    }))
+                  }
+                  placeholder="https://..."
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Source name
+                </label>
+                <input
+                  value={addCandidateForm.source_name}
+                  onChange={(e) =>
+                    setAddCandidateForm((f) => ({
+                      ...f,
+                      source_name: e.target.value,
+                    }))
+                  }
+                  placeholder="Leave blank to use the domain name"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Published date
+                </label>
+                <input
+                  type="date"
+                  value={addCandidateForm.published_at}
+                  onChange={(e) =>
+                    setAddCandidateForm((f) => ({
+                      ...f,
+                      published_at: e.target.value,
+                    }))
+                  }
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Summary
+                </label>
+                <textarea
+                  value={addCandidateForm.summary}
+                  onChange={(e) =>
+                    setAddCandidateForm((f) => ({
+                      ...f,
+                      summary: e.target.value,
+                    }))
+                  }
+                  rows={3}
+                  placeholder="Optional — a sentence or two on what happened, if the article itself won't fetch cleanly"
+                  className="mt-1.5 w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {addCandidateError && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {addCandidateError}
+                </div>
+              )}
+
+              <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddCandidate(false);
+                    setAddCandidateError("");
+                  }}
+                  className="rounded-xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={addingCandidate}
+                  className="rounded-xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-500 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {addingCandidate
+                    ? "Adding..."
+                    : "Add to pending queue"}
+                </button>
+
+              </div>
+
+            </form>
+
+          </div>
+
+        </div>
+      )}
 
       {reviewingCandidate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4">

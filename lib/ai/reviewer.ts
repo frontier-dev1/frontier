@@ -1,9 +1,9 @@
-const GEMINI_MODEL =
-  process.env.GEMINI_MODEL ||
-  "gemini-3.5-flash-lite";
+const GROQ_MODEL =
+  process.env.GROQ_MODEL ||
+  "llama-3.3-70b-versatile";
 
-const GEMINI_API_URL =
-  "https://generativelanguage.googleapis.com/v1beta/models";
+const GROQ_API_URL =
+  "https://api.groq.com/openai/v1/chat/completions";
 
 export type AIReviewResult = {
   is_incident: boolean;
@@ -223,187 +223,6 @@ async function fetchArticleText(
   }
 }
 
-/*
- * Gemini structured-output schema.
- *
- * Keep this deliberately conservative.
- *
- * We do not use:
- *
- * - additionalProperties
- * - nullable
- * - type arrays
- *
- * because the REST responseSchema endpoint can reject
- * those constructs depending on the schema representation.
- *
- * Fields that may be unknown are represented as strings.
- * The application converts empty strings to null afterward.
- */
-
-const RESPONSE_SCHEMA = {
-  type: "object",
-
-  properties: {
-    is_incident: {
-      type: "boolean",
-      description:
-        "Whether the source describes a real observed AI behavioral incident.",
-    },
-
-    confidence: {
-      type: "integer",
-      minimum: 0,
-      maximum: 100,
-      description:
-        "Confidence from 0 to 100 that this qualifies as a significant Frontier AI incident.",
-    },
-
-    recommendation: {
-      type: "string",
-      enum: [
-        "publish",
-        "review",
-        "reject",
-      ],
-    },
-
-    company: {
-      type: "string",
-      description:
-        "Company or organization responsible for the AI system. Return an empty string if unknown.",
-    },
-
-    model: {
-      type: "string",
-      description:
-        "AI model involved. Return an empty string if unknown.",
-    },
-
-    category: {
-      type: "string",
-      enum: [
-        "Autonomous Agent",
-        "Cybersecurity",
-        "Deception",
-        "Hallucination",
-        "Privacy",
-        "Safety",
-        "Manipulation",
-        "Unauthorized Action",
-        "Other",
-      ],
-    },
-
-    severity: {
-      type: "string",
-      enum: [
-        "Low",
-        "Moderate",
-        "High",
-        "Critical",
-      ],
-    },
-
-    incident_summary: {
-      type: "string",
-      description:
-        "Concise summary of the documented incident. Return an empty string if the source does not establish an incident.",
-    },
-
-    incident_description: {
-      type: "string",
-      description:
-        "Detailed description of what the AI system actually did. Return an empty string if not established.",
-    },
-
-    intended_behavior: {
-      type: "string",
-      description:
-        "The intended instructions, task, or behavior. Return an empty string if not established.",
-    },
-
-    observed_behavior: {
-      type: "string",
-      description:
-        "The observed behavior that differed from the intended behavior. Return an empty string if not established.",
-    },
-
-    scope_violation: {
-      type: "string",
-      description:
-        "Why the observed behavior exceeded the intended scope or constraints. Return an empty string if not established.",
-    },
-
-    evidence_summary: {
-      type: "string",
-      description:
-        "Summary of the evidence supporting or weakening the incident claim.",
-    },
-
-    evidence_quality: {
-      type: "integer",
-      minimum: 0,
-      maximum: 100,
-      description:
-        "Quality of the available evidence from 0 to 100.",
-    },
-
-    reasoning: {
-      type: "string",
-      description:
-        "Reasoning explaining the incident classification and recommendation.",
-    },
-
-    additional_sources: {
-      type: "array",
-
-      items: {
-        type: "object",
-
-        properties: {
-          name: {
-            type: "string",
-          },
-
-          url: {
-            type: "string",
-          },
-
-          relevance: {
-            type: "string",
-          },
-        },
-
-        required: [
-          "name",
-          "url",
-          "relevance",
-        ],
-      },
-    },
-  },
-
-  required: [
-    "is_incident",
-    "confidence",
-    "recommendation",
-    "company",
-    "model",
-    "category",
-    "severity",
-    "incident_summary",
-    "incident_description",
-    "intended_behavior",
-    "observed_behavior",
-    "scope_violation",
-    "evidence_summary",
-    "evidence_quality",
-    "reasoning",
-    "additional_sources",
-  ],
-};
-
 function buildPrompt(
   article: ArticleInput
 ) {
@@ -530,7 +349,62 @@ ${
   "[The article could not be fetched. Assess using the available metadata only and reduce evidence quality accordingly.]"
 }
 
-Return ONLY the structured JSON requested by the response schema.
+Return ONLY valid JSON with this exact structure:
+
+{
+  "is_incident": false,
+  "confidence": 0,
+  "recommendation": "reject",
+  "company": "",
+  "model": "",
+  "category": "Other",
+  "severity": "Low",
+  "incident_summary": "",
+  "incident_description": "",
+  "intended_behavior": "",
+  "observed_behavior": "",
+  "scope_violation": "",
+  "evidence_summary": "",
+  "evidence_quality": 0,
+  "reasoning": "",
+  "additional_sources": []
+}
+
+Field rules:
+
+is_incident: boolean — whether the source describes a real observed AI behavioral incident.
+
+confidence: integer 0-100 — confidence that this qualifies as a significant Frontier AI incident.
+
+recommendation: exactly one of "publish", "review", "reject".
+
+company: the company/organization responsible for the AI system, or "" if unknown.
+
+model: the AI model involved, or "" if unknown.
+
+category: exactly one of "Autonomous Agent", "Cybersecurity", "Deception", "Hallucination", "Privacy", "Safety", "Manipulation", "Unauthorized Action", "Other".
+
+severity: exactly one of "Low", "Moderate", "High", "Critical".
+
+incident_summary: concise summary of the documented incident, or "" if not established.
+
+incident_description: detailed description of what the AI system actually did, or "" if not established.
+
+intended_behavior: the intended instructions/task/behavior, or "" if not established.
+
+observed_behavior: the observed behavior that differed from the intended behavior, or "" if not established.
+
+scope_violation: why the observed behavior exceeded the intended scope or constraints, or "" if not established.
+
+evidence_summary: summary of the evidence supporting or weakening the incident claim.
+
+evidence_quality: integer 0-100.
+
+reasoning: your reasoning for the classification and recommendation.
+
+additional_sources: an array of objects, each with "name", "url", and "relevance" string fields — other sources that corroborate this, or an empty array.
+
+Respond with JSON only, no other text.
 `;
 }
 
@@ -555,11 +429,11 @@ export async function reviewCandidate(
   article: ArticleInput
 ): Promise<AIReviewResult> {
   const apiKey =
-    process.env.GEMINI_API_KEY;
+    process.env.GROQ_API_KEY;
 
   if (!apiKey) {
     throw new Error(
-      "GEMINI_API_KEY is not configured."
+      "GROQ_API_KEY is not configured."
     );
   }
 
@@ -577,38 +451,32 @@ export async function reviewCandidate(
 
   const response =
     await fetch(
-      `${GEMINI_API_URL}/${GEMINI_MODEL}:generateContent?key=${encodeURIComponent(
-        apiKey
-      )}`,
+      GROQ_API_URL,
       {
         method: "POST",
 
         headers: {
           "Content-Type":
             "application/json",
+
+          Authorization:
+            `Bearer ${apiKey}`,
         },
 
         body: JSON.stringify({
-          contents: [
+          model: GROQ_MODEL,
+
+          messages: [
             {
               role: "user",
-
-              parts: [
-                {
-                  text: prompt,
-                },
-              ],
+              content: prompt,
             },
           ],
 
-          generationConfig: {
-            temperature: 0.1,
+          temperature: 0.1,
 
-            responseMimeType:
-              "application/json",
-
-            responseSchema:
-              RESPONSE_SCHEMA,
+          response_format: {
+            type: "json_object",
           },
         }),
 
@@ -624,7 +492,7 @@ export async function reviewCandidate(
       await response.text();
 
     throw new Error(
-      `Gemini API error (${response.status}): ${errorText.slice(
+      `Groq API error (${response.status}): ${errorText.slice(
         0,
         1000
       )}`
@@ -635,28 +503,35 @@ export async function reviewCandidate(
     await response.json();
 
   const text =
-    payload?.candidates?.[0]
-      ?.content?.parts?.[0]?.text;
+    payload?.choices?.[0]
+      ?.message?.content?.trim();
 
   if (!text) {
     throw new Error(
-      "Gemini returned an empty response."
+      "Groq returned an empty response."
     );
   }
 
   let rawResult: any;
 
   try {
+    const cleanedText =
+      text
+        .replace(/^```json\s*/i, "")
+        .replace(/^```\s*/i, "")
+        .replace(/\s*```$/i, "")
+        .trim();
+
     rawResult =
-      JSON.parse(text);
+      JSON.parse(cleanedText);
   } catch {
     throw new Error(
-      "Gemini returned invalid JSON."
+      "Groq returned invalid JSON."
     );
   }
 
   /*
-   * Convert empty strings returned by Gemini
+   * Convert empty strings returned by the model
    * into null values expected by our application.
    */
 

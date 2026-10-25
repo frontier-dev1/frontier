@@ -9,7 +9,9 @@ import {
   reviewNewsArticle,
 } from "@/lib/ai/news-reviewer";
 
-import { findBestMatch } from "@/lib/duplicate-detection";
+import { topMatches } from "@/lib/duplicate-detection";
+
+import { judgeDuplicate } from "@/lib/ai/duplicate-judge";
 
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -34,13 +36,6 @@ const MIN_RELEVANCE_SCORE = 60;
  */
 const MIN_PUBLISHED_DATE = new Date("2026-04-01T00:00:00Z");
 
-/*
- * How similar two articles' titles+summaries need to be (same
- * company) to treat them as coverage of the same underlying story
- * rather than two separate news items.
- */
-const DUPLICATE_SIMILARITY_THRESHOLD = 0.35;
-
 export async function POST(
   request: Request
 ) {
@@ -62,6 +57,8 @@ export async function GET(
 async function runNewsDiscovery(
   request: Request
 ) {
+  const runStartedAt = Date.now();
+
   try {
     /*
      * ---------------------------------------------------------
@@ -172,6 +169,15 @@ async function runNewsDiscovery(
       }
     }
 
+    if (!process.env.GROQ_API_KEY) {
+      return NextResponse.json(
+        {
+          error: "GROQ_API_KEY is not configured. Set it in the server environment to run AI news discovery.",
+        },
+        { status: 500 }
+      );
+    }
+
     /*
      * ---------------------------------------------------------
      * 2. Discover articles
@@ -200,6 +206,10 @@ async function runNewsDiscovery(
      */
 
     for (const article of discovered) {
+      if (Date.now() - runStartedAt >= TIME_BUDGET_MS) {
+        break;
+      }
+
       try {
         const {
           data: candidate,
@@ -303,8 +313,6 @@ async function runNewsDiscovery(
      * ---------------------------------------------------------
      */
 
-    const reviewStartedAt = Date.now();
-
     /*
      * Groq's free tier allows 30 requests/minute. Reviewing
      * candidates back-to-back with no pacing can burst past that
@@ -315,7 +323,7 @@ async function runNewsDiscovery(
     let lastReviewCallAt = 0;
 
     while (
-      Date.now() - reviewStartedAt <
+      Date.now() - runStartedAt <
       TIME_BUDGET_MS
     ) {
       const {
@@ -449,34 +457,81 @@ async function runNewsDiscovery(
          * -----------------------------------------------------
          *
          * Multiple outlets often cover the same underlying
-         * story. ai_news has no field to merge sources into
-         * (unlike incidents), so a duplicate here is suppressed
-         * rather than published a second time.
+         * story with completely different wording, so this
+         * doesn't gate on the "company" field matching (that
+         * field isn't reliably extracted the same way twice)
+         * or rely on word-overlap alone (different publishers
+         * share almost no words describing the same event).
+         * Instead: pull a pool of recently-published articles
+         * regardless of company, cheaply shortlist the most
+         * textually similar few, then ask an LLM to make the
+         * actual same-event judgment. ai_news has no field to
+         * merge sources into (unlike incidents), so a duplicate
+         * here is suppressed rather than published a second time.
          */
 
         let isDuplicate = false;
         let duplicateOfTitle: string | null = null;
 
-        if (shouldPublish && review.company) {
-          const { data: sameCompanyArticles } =
+        if (shouldPublish) {
+          const { data: recentArticles } =
             await supabase
               .from("ai_news")
-              .select("title, summary")
-              .ilike("ai_company", review.company)
+              .select("id, title, summary")
               .order("created_at", { ascending: false })
-              .limit(15);
+              .limit(40);
 
-          const duplicateMatch = findBestMatch(
+          const shortlist = topMatches(
             `${review.title || candidate.title} ${review.summary || ""}`,
-            sameCompanyArticles ?? [],
+            recentArticles ?? [],
             (article) =>
               `${article.title} ${article.summary ?? ""}`,
-            DUPLICATE_SIMILARITY_THRESHOLD
+            5
           );
 
-          if (duplicateMatch) {
-            isDuplicate = true;
-            duplicateOfTitle = duplicateMatch.item.title;
+          if (shortlist.length > 0) {
+            // Pace this the same as review calls — it shares
+            // the same Groq rate limit.
+            const msSinceLastCall =
+              Date.now() - lastReviewCallAt;
+
+            if (msSinceLastCall < MIN_MS_BETWEEN_REVIEWS) {
+              await new Promise((resolve) =>
+                setTimeout(
+                  resolve,
+                  MIN_MS_BETWEEN_REVIEWS - msSinceLastCall
+                )
+              );
+            }
+
+            lastReviewCallAt = Date.now();
+
+            try {
+              const judgment = await judgeDuplicate({
+                newTitle: review.title || candidate.title,
+                newSummary: review.summary || "",
+                candidates: shortlist.map((m) => ({
+                  id: m.item.id,
+                  title: m.item.title,
+                  summary: m.item.summary ?? "",
+                })),
+              });
+
+              if (judgment.is_duplicate) {
+                isDuplicate = true;
+                duplicateOfTitle =
+                  shortlist.find(
+                    (m) => m.item.id === judgment.matching_id
+                  )?.item.title ?? null;
+              }
+            } catch (judgeError) {
+              // Don't let a broken duplicate check block an
+              // otherwise-good publish — log it and move on.
+              console.error(
+                "Duplicate judgment failed, publishing anyway:",
+                judgeError
+              );
+            }
           }
         }
 
@@ -654,7 +709,12 @@ async function runNewsDiscovery(
 
             /*
              * It was reviewed successfully but could
-             * not be published.
+             * not be published. "failed" isn't an
+             * allowed status value on this table, so
+             * put it back to pending — it'll be retried
+             * on a future run instead of getting
+             * permanently stuck at "reviewing" (which
+             * the batch loop never picks up again).
              */
 
             await supabase
@@ -663,7 +723,10 @@ async function runNewsDiscovery(
               )
               .update({
                 status:
-                  "failed",
+                  "pending",
+
+                ai_reasoning:
+                  `Publish failed: ${publishError.message}`,
 
                 updated_at:
                   new Date().toISOString(),

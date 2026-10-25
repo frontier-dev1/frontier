@@ -168,7 +168,30 @@ export default function NewsCandidatesDashboard({
 
     try {
       const res = await fetch("/api/news/discover", { method: "POST" });
-      const data = await res.json();
+      const responseText = await res.text();
+      let data: {
+        error?: string;
+        discovered?: number;
+        candidates_inserted?: number;
+        reviewed?: number;
+        published?: number;
+        rejected?: number;
+        duplicate_articles?: number;
+        duplicates?: number;
+        failed?: number;
+      };
+
+      try {
+        data = JSON.parse(responseText);
+      } catch {
+        const responseType = res.headers.get("content-type") ?? "unknown content type";
+        const detail = responseText.trim()
+          ? `response was not JSON (${responseType})`
+          : "response body was empty";
+        throw new Error(
+          `Discovery returned no JSON: ${detail} (HTTP ${res.status}). The server may have timed out; check the server logs.`
+        );
+      }
 
       if (!res.ok) {
         throw new Error(data.error || "Discovery failed.");
