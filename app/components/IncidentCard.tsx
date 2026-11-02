@@ -1,121 +1,65 @@
+// app/components/IncidentCard.tsx
+
 import Link from "next/link";
-import SeverityBadge from "./SeverityBadge";
+import  SeverityBadge  from "./SeverityBadge";
 
-type Incident = {
-  id: string;
-  title: string;
-  company: string;
-  model: string;
-  severity: string;
-  summary: string;
-  reportedAt: string;
-};
-
-function formatDate(date: string) {
-  if (!date) {
-    return "Unknown";
+// Helper function to safely format dates and prevent "Invalid Date"
+function formatDateSafely(dateInput?: string | Date): string {
+  if (!dateInput) return "N/A";
+  
+  const parsed = new Date(dateInput);
+  if (isNaN(parsed.getTime())) {
+    return "N/A";
   }
 
-  return new Date(
-    `${date}T00:00:00`
-  ).toLocaleDateString("en-US", {
+  return parsed.toLocaleDateString("en-US", {
+    year: "numeric",
     month: "short",
     day: "numeric",
-    year: "numeric",
   });
 }
 
-function severityAccent(severity: string) {
-  switch (severity) {
-    case "Critical":
-      return "bg-red-500";
+export default function IncidentCard({ incident }: { incident: any }) {
+  // Extract date from all possible database keys
+  const rawDate =
+    incident.occurred_at ||
+    incident.reportedAt ||
+    incident.published_at ||
+    incident.incident_date ||
+    incident.date ||
+    incident.created_at;
 
-    case "High":
-      return "bg-orange-500";
+  const formattedDate = formatDateSafely(rawDate);
 
-    case "Moderate":
-      return "bg-yellow-500";
-
-    case "Low":
-      return "bg-emerald-500";
-
-    default:
-      return "bg-slate-400";
-  }
-}
-
-export default function IncidentCard({
-  incident,
-}: {
-  incident: Incident;
-}) {
   return (
-    <Link
-      href={`/incident/${incident.id}`}
-      className="group relative block overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-[0_8px_30px_rgba(15,23,42,0.04)] transition duration-300 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-[0_18px_50px_rgba(15,23,42,0.09)]"
-    >
-      {/* Accent line */}
-
-      <div
-        className={`absolute left-0 top-0 h-full w-1 ${severityAccent(
-          incident.severity
-        )}`}
-      />
-
-      <div className="pl-2">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <SeverityBadge
-                severity={incident.severity}
-              />
-
-              <span className="text-xs text-slate-400">
-                {formatDate(
-                  incident.reportedAt
-                )}
-              </span>
-            </div>
-
-            <h2 className="text-xl font-bold tracking-tight text-slate-950 transition-colors group-hover:text-blue-600 sm:text-[22px]">
-              {incident.title}
-            </h2>
-
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-sm text-slate-500">
-              <span className="font-medium text-slate-700">
-                {incident.company}
-              </span>
-
-              <span className="text-slate-300">
-                •
-              </span>
-
-              <span>{incident.model}</span>
-            </div>
-          </div>
-
-          <span className="hidden shrink-0 rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-500 transition group-hover:border-blue-200 group-hover:bg-blue-50 group-hover:text-blue-600 sm:block">
-            View incident →
-          </span>
+    <div className="flex flex-col justify-between border border-border rounded-xl p-5 bg-card text-card-foreground shadow-sm hover:shadow-md transition-shadow">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <SeverityBadge severity={incident.severity || "medium"} />
+          <span className="text-xs text-muted-foreground">{formattedDate}</span>
         </div>
 
-        <p className="mt-5 max-w-4xl text-sm leading-7 text-slate-600">
-          {incident.summary}
+        <h3 className="font-semibold text-lg line-clamp-2 leading-snug">
+          {incident.title}
+        </h3>
+
+        <p className="text-sm text-muted-foreground line-clamp-3">
+          {incident.summary || incident.description || "No description provided."}
         </p>
-
-        <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4 sm:hidden">
-          <span className="text-xs text-slate-400">
-            Reported{" "}
-            {formatDate(
-              incident.reportedAt
-            )}
-          </span>
-
-          <span className="text-sm font-semibold text-blue-600">
-            View incident →
-          </span>
-        </div>
       </div>
-    </Link>
+
+      <div className="mt-5 pt-4 border-t border-border flex items-center justify-between text-xs">
+        <span className="font-medium text-foreground">
+          {incident.company || "Unknown Company"} • {incident.model || incident.ai_model || "Unspecified Model"}
+        </span>
+
+        <Link
+          href={`/incidents/${incident.id}`}
+          className="text-primary font-medium hover:underline inline-flex items-center gap-1"
+        >
+          View Incident →
+        </Link>
+      </div>
+    </div>
   );
 }
