@@ -1,9 +1,10 @@
+// app/incidents/IncidentsClient.tsx
 "use client";
 
 import React, { useState, useMemo, ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import IncidentCard from "@/app/components/IncidentCard";
-import { Search, FileSpreadsheet, FileText } from "lucide-react";
+import { Search, FileSpreadsheet, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 
 interface IncidentsClientProps {
   initialIncidents: any[];
@@ -29,6 +30,10 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
   const [selectedSeverity, setSelectedSeverity] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(20);
 
   // Sort initial records from newest to oldest by occurred_at
   const incidents = useMemo(() => {
@@ -84,6 +89,19 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
     endDate,
   ]);
 
+  // Reset to page 1 whenever search or filter inputs change
+  const handleFilterChange = (setter: React.Dispatch<React.SetStateAction<string>>, value: string) => {
+    setter(value);
+    setCurrentPage(1);
+  };
+
+  // Pagination Calculations
+  const totalPages = Math.ceil(filteredIncidents.length / itemsPerPage) || 1;
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const paginatedIncidents = useMemo(() => {
+    return filteredIncidents.slice(startIndex, startIndex + itemsPerPage);
+  }, [filteredIncidents, startIndex, itemsPerPage]);
+
   const handleExport = (format: "csv" | "pdf") => {
     const params = new URLSearchParams();
     params.append("format", format);
@@ -109,7 +127,7 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
               placeholder="Search incidents..."
               className="w-full pl-9 pr-4 py-2 border border-border rounded-md text-sm bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
               value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
+              onChange={(e) => handleFilterChange(setSearchTerm, e.target.value)}
             />
           </div>
 
@@ -144,7 +162,7 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
             <select
               className="w-full p-2 border border-border rounded bg-background text-foreground text-sm"
               value={selectedCompany}
-              onChange={(e) => setSelectedCompany(e.target.value)}
+              onChange={(e) => handleFilterChange(setSelectedCompany, e.target.value)}
             >
               <option value="">All Companies</option>
               {companies.map((c) => (
@@ -162,7 +180,7 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
             <select
               className="w-full p-2 border border-border rounded bg-background text-foreground text-sm"
               value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
+              onChange={(e) => handleFilterChange(setSelectedModel, e.target.value)}
             >
               <option value="">All Models</option>
               {models.map((m) => (
@@ -180,7 +198,7 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
             <select
               className="w-full p-2 border border-border rounded bg-background text-foreground text-sm"
               value={selectedSeverity}
-              onChange={(e) => setSelectedSeverity(e.target.value)}
+              onChange={(e) => handleFilterChange(setSelectedSeverity, e.target.value)}
             >
               <option value="">All Severities</option>
               <option value="low">Low</option>
@@ -198,7 +216,7 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
               type="date"
               className="w-full p-2 border border-border rounded bg-background text-foreground text-sm"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(e) => handleFilterChange(setStartDate, e.target.value)}
             />
           </div>
 
@@ -210,22 +228,40 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
               type="date"
               className="w-full p-2 border border-border rounded bg-background text-foreground text-sm"
               value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(e) => handleFilterChange(setEndDate, e.target.value)}
             />
           </div>
         </div>
       </div>
 
-      {/* Results Counter */}
-      <div className="flex justify-between items-center text-sm text-muted-foreground px-1">
+      {/* Top Status Bar & Per-Page Controls */}
+      <div className="flex flex-col sm:flex-row justify-between items-center text-sm text-muted-foreground px-1 gap-2">
         <span>
-          Showing {filteredIncidents.length} of {incidents.length} incidents
+          Showing {filteredIncidents.length > 0 ? startIndex + 1 : 0}–
+          {Math.min(startIndex + itemsPerPage, filteredIncidents.length)} of{" "}
+          {filteredIncidents.length} incidents
         </span>
+
+        <div className="flex items-center gap-2">
+          <label className="text-xs">Per page:</label>
+          <select
+            className="p-1 border border-border rounded bg-background text-foreground text-xs"
+            value={itemsPerPage}
+            onChange={(e) => {
+              setItemsPerPage(Number(e.target.value));
+              setCurrentPage(1);
+            }}
+          >
+            <option value={20}>20</option>
+            <option value={50}>50</option>
+            <option value={100}>100</option>
+          </select>
+        </div>
       </div>
 
       {/* Interactive Incident Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {filteredIncidents.map((incident) => (
+        {paginatedIncidents.map((incident) => (
           <IncidentCard key={incident.id} incident={incident} />
         ))}
       </div>
@@ -235,6 +271,45 @@ export function IncidentsClient({ initialIncidents }: IncidentsClientProps) {
           <p className="text-muted-foreground">
             No rogue AI incidents found matching your filter criteria.
           </p>
+        </div>
+      )}
+
+      {/* Pagination Controls Bar */}
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between border-t border-border pt-4 text-sm">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
+            disabled={currentPage === 1}
+            className="flex items-center gap-1 border-border"
+          >
+            <ChevronLeft className="h-4 w-4" /> Previous
+          </Button>
+
+          <div className="flex items-center gap-1">
+            {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((page) => (
+              <Button
+                key={page}
+                variant={currentPage === page ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setCurrentPage(page)}
+                className="h-8 w-8 p-0"
+              >
+                {page}
+              </Button>
+            ))}
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
+            disabled={currentPage === totalPages}
+            className="flex items-center gap-1 border-border"
+          >
+            Next <ChevronRight className="h-4 w-4" />
+          </Button>
         </div>
       )}
     </div>
