@@ -33,15 +33,11 @@ const TIME_BUDGET_MS = 45_000;
  */
 const MIN_AUTO_PUBLISH_CONFIDENCE = 80;
 
-export async function POST(
-  request: Request
-) {
+export async function POST(request: Request) {
   return runDiscovery(request);
 }
 
-export async function GET(
-  request: Request
-) {
+export async function GET(request: Request) {
   /*
    * Vercel Cron Jobs always send a GET request and automatically
    * attach `Authorization: Bearer $CRON_SECRET` if that env var is
@@ -51,96 +47,61 @@ export async function GET(
   return runDiscovery(request);
 }
 
-async function runDiscovery(
-  request: Request
-) {
-  const cronSecret =
-    process.env.FRONTIER_CRON_SECRET;
-
-  const vercelCronSecret =
-    process.env.CRON_SECRET;
+async function runDiscovery(request: Request) {
+  const cronSecret = process.env.FRONTIER_CRON_SECRET;
+  const vercelCronSecret = process.env.CRON_SECRET;
 
   /*
    * ----------------------------------------------------------
-   * 1. Authentication
+   * Authentication
    * ----------------------------------------------------------
-   *
    * Automated GitHub/Vercel requests may use the cron secret.
    * Manual requests must come from a logged-in admin.
    */
+  const authorization = request.headers.get("authorization");
 
-  const authorization =
-    request.headers.get("authorization");
+  const providedSecret = authorization?.startsWith("Bearer ")
+    ? authorization.slice(7)
+    : null;
 
-  const providedSecret =
-    authorization?.startsWith("Bearer ")
-      ? authorization.slice(7)
-      : null;
-
-  const isAutomatedRequest =
-    Boolean(
-      providedSecret &&
-        ((cronSecret &&
-          providedSecret === cronSecret) ||
-          (vercelCronSecret &&
-            providedSecret === vercelCronSecret))
-    );
+  const isAutomatedRequest = Boolean(
+    providedSecret &&
+      ((cronSecret && providedSecret === cronSecret) ||
+        (vercelCronSecret && providedSecret === vercelCronSecret))
+  );
 
   if (!isAutomatedRequest) {
-    const supabase =
-      await createClient();
+    const supabase = await createClient();
 
     const {
       data: { user },
-    } =
-      await supabase.auth.getUser();
+    } = await supabase.auth.getUser();
 
     if (!user) {
       return NextResponse.json(
-        {
-          error: "Unauthorized",
-        },
-        {
-          status: 401,
-        }
+        { error: "Unauthorized" },
+        { status: 401 }
       );
     }
 
-    const {
-      data: admin,
-      error: adminError,
-    } =
-      await supabase
-        .from("admin_users")
-        .select("user_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
+    const { data: admin, error: adminError } = await supabase
+      .from("admin_users")
+      .select("user_id")
+      .eq("user_id", user.id)
+      .maybeSingle();
 
     if (adminError) {
-      console.error(
-        "Admin verification failed:",
-        adminError
-      );
-
+      console.error("Admin verification failed:", adminError);
       return NextResponse.json(
-        {
-          error:
-            "Unable to verify administrator access.",
-        },
-        {
-          status: 500,
-        }
+        { error: "Unable to verify administrator access." },
+        { status: 500 }
       );
     }
 
     if (!admin) {
       return NextResponse.json(
-        {
-          error: "Forbidden",
-        },
-        {
-          status: 403,
-        }
+        { error: "Forbidden" },
+        { status: 403 }
       );
     }
   }
@@ -150,83 +111,91 @@ async function runDiscovery(
    * 2. Create service-role Supabase client
    * ----------------------------------------------------------
    */
+  const adminSupabase = createAdminClient();
 
-  const adminSupabase =
-    createAdminClient();
-
-  let discoveryRunId:
-    | string
-    | null = null;
-
-  const startedAt =
-    new Date().toISOString();
+  let discoveryRunId: string | null = null;
+  const startedAt = new Date().toISOString();
 
   /*
    * ----------------------------------------------------------
    * 3. Create discovery run record
    * ----------------------------------------------------------
    */
-
   try {
-    const {
-      data: run,
-      error,
-    } =
-      await adminSupabase
-        .from("discovery_runs")
-        .insert({
-          started_at: startedAt,
-          status: "running",
-        })
-        .select("id")
-        .single();
+    const { data: run, error } = await adminSupabase
+      .from("discovery_runs")
+      .insert({
+        started_at: startedAt,
+        status: "running",
+      })
+      .select("id")
+      .single();
 
     if (error) {
-      console.error(
-        "Failed to create discovery run:",
-        error
-      );
+      console.error("Failed to create discovery run:", error);
     } else {
       discoveryRunId = run.id;
     }
   } catch (error) {
-    console.error(
-      "Discovery run logging failed:",
-      error
-    );
+    console.error("Discovery run logging failed:", error);
   }
 
   /*
    * ----------------------------------------------------------
-   * 4. Run discovery
+   * 4. Run discovery & Auto-Prune stale/rejected candidates
    * ----------------------------------------------------------
    */
-
   try {
-    console.log(
-      "Frontier discovery started."
+    console.log("Frontier discovery started.");
+
+    // Prune rejected or low-scoring candidates to avoid hitting database capacity limits
+    try {
+      await adminSupabase
+        .from("incident_candidates")
+        .delete()
+        .or("status.eq.rejected,relevance_score.lt.15");
+    } catch (pruneErr) {
+      console.warn("Table auto-pruning skipped:", pruneErr);
+    }
+
+    const rawCandidates = await discoverCandidates();
+
+    // ----------------------------------------------------------
+    // URL Memory Check: Exclude articles already stored or reviewed
+    // ----------------------------------------------------------
+    const candidateUrls = rawCandidates.map((c) => c.article_url);
+    const existingUrlSet = new Set<string>();
+
+    if (candidateUrls.length > 0) {
+      const [{ data: existingCandidates }, { data: existingIncidents }] =
+        await Promise.all([
+          adminSupabase
+            .from("incident_candidates")
+            .select("article_url")
+            .in("article_url", candidateUrls),
+          adminSupabase
+            .from("incidents")
+            .select("url")
+            .in("url", candidateUrls),
+        ]);
+
+      existingCandidates?.forEach((c) => existingUrlSet.add(c.article_url));
+      existingIncidents?.forEach((i) => existingUrlSet.add(i.url));
+    }
+
+    const candidates = rawCandidates.filter(
+      (c) => !existingUrlSet.has(c.article_url)
     );
 
-    const candidates =
-      await discoverCandidates();
-
     let inserted = 0;
-
-    let duplicates = 0;
+    let duplicates = rawCandidates.length - candidates.length;
 
     /*
      * --------------------------------------------------------
-     * 5. Save every discovered candidate
+     * 5. Save every newly discovered candidate
      * --------------------------------------------------------
      */
-
-    for (
-      const candidate of candidates
-    ) {
-      /*
-       * Log useful information during development.
-       */
-
+    for (const candidate of candidates) {
       console.log(
         [
           "Candidate:",
@@ -247,102 +216,42 @@ async function runDiscovery(
         ].join(" ")
       );
 
-      /*
-       * ------------------------------------------------------
-       * Insert candidate.
-       *
-       * article_url is unique, so existing candidates are
-       * ignored rather than overwritten.
-       *
-       * This is intentional.
-       * ------------------------------------------------------
-       */
-
-      const {
-        data,
-        error,
-      } =
-        await adminSupabase
-          .from("incident_candidates")
-          .upsert(
-            {
-              id:
-                candidate.id,
-
-              title:
-                candidate.title,
-
-              source_name:
-                candidate.source_name,
-
-              source_url:
-                candidate.source_url,
-
-              article_url:
-                candidate.article_url,
-
-              summary:
-                candidate.summary,
-
-              published_at:
-                candidate.published_at,
-
-              discovered_at:
-                candidate.discovered_at,
-
-              status:
-                "pending",
-
-              relevance_score:
-                candidate.relevance_score,
-
-              matched_keywords:
-                candidate.matched_keywords,
-
-              notes:
-                candidate.notes,
-
-              article_text:
-                candidate.article_text,
-
-              article_text_source:
-                candidate.article_text_source,
-
-              article_text_fetched_at:
-                candidate.article_text_fetched_at,
-
-              article_text_length:
-                candidate.article_text_length,
-
-              article_fetch_status:
-                candidate.article_fetch_status,
-
-              updated_at:
-                new Date().toISOString(),
-            },
-            {
-              onConflict:
-                "article_url",
-
-              ignoreDuplicates:
-                true,
-            }
-          )
-          .select("id");
+      const { data, error } = await adminSupabase
+        .from("incident_candidates")
+        .upsert(
+          {
+            id: candidate.id,
+            title: candidate.title,
+            source_name: candidate.source_name,
+            source_url: candidate.source_url,
+            article_url: candidate.article_url,
+            summary: candidate.summary,
+            published_at: candidate.published_at,
+            discovered_at: candidate.discovered_at,
+            status: "pending",
+            relevance_score: candidate.relevance_score,
+            matched_keywords: candidate.matched_keywords,
+            notes: candidate.notes,
+            article_text: candidate.article_text,
+            article_text_source: candidate.article_text_source,
+            article_text_fetched_at: candidate.article_text_fetched_at,
+            article_text_length: candidate.article_text_length,
+            article_fetch_status: candidate.article_fetch_status,
+            updated_at: new Date().toISOString(),
+          },
+          {
+            onConflict: "article_url",
+            ignoreDuplicates: true,
+          }
+        )
+        .select("id");
 
       if (error) {
-        console.error(
-          "Candidate insert error:",
-          error
-        );
-
+        console.error("Candidate insert error:", error);
         continue;
       }
 
-      if (
-        data &&
-        data.length > 0
-      ) {
+      if (data && data.length > 0) {
         inserted++;
       } else {
         duplicates++;
@@ -353,87 +262,47 @@ async function runDiscovery(
      * ----------------------------------------------------------
      * 5.5. Batch review + auto-decide
      * ----------------------------------------------------------
-     *
-     * Discovery above only inserts bare candidates (title, url,
-     * summary) — fast, since it's just RSS parsing. Fetching full
-     * article text and running it through Gemini happens here,
-     * one candidate at a time, until we're close to the function's
-     * time limit. This keeps a single invocation safe on Vercel
-     * Hobby regardless of how many candidates are queued up.
      */
-
     const reviewStartedAt = Date.now();
-
-    /*
-     * Groq's free tier allows 30 requests/minute, and each
-     * candidate here can use up to two calls (review, and
-     * duplicate judgment for publish-eligible ones). Pacing
-     * both keeps a run smooth instead of hitting 429s partway
-     * through.
-     */
     const MIN_MS_BETWEEN_CALLS = 2_100;
     let lastGroqCallAt = 0;
 
     async function waitForRateLimit() {
       const msSinceLastCall = Date.now() - lastGroqCallAt;
-
       if (msSinceLastCall < MIN_MS_BETWEEN_CALLS) {
         await new Promise((resolve) =>
-          setTimeout(
-            resolve,
-            MIN_MS_BETWEEN_CALLS - msSinceLastCall
-          )
+          setTimeout(resolve, MIN_MS_BETWEEN_CALLS - msSinceLastCall)
         );
       }
-
       lastGroqCallAt = Date.now();
     }
 
     let reviewed = 0;
-
     let autoPublished = 0;
-
     let duplicatesMerged = 0;
-
     let autoRejected = 0;
-
     let leftForHuman = 0;
-
     let reviewFailed = 0;
 
-    while (
-      Date.now() - reviewStartedAt <
-      TIME_BUDGET_MS
-    ) {
-      const {
-        data: pending,
-        error: pendingError,
-      } = await adminSupabase
+    while (Date.now() - reviewStartedAt < TIME_BUDGET_MS) {
+      const { data: pending, error: pendingError } = await adminSupabase
         .from("incident_candidates")
         .select("*")
         .eq("status", "pending")
-        .order("relevance_score", {
-          ascending: false,
-        })
+        .order("relevance_score", { ascending: false })
         .limit(1);
 
       if (pendingError) {
-        console.error(
-          "Failed to load pending candidate:",
-          pendingError
-        );
+        console.error("Failed to load pending candidate:", pendingError);
         break;
       }
 
       const next = pending?.[0];
-
       if (!next) {
         break;
       }
 
       try {
-        // Mark as reviewing so a second concurrent run (or a
-        // human clicking "Run AI Review") doesn't double-process it.
         await adminSupabase
           .from("incident_candidates")
           .update({
@@ -443,12 +312,10 @@ async function runDiscovery(
           })
           .eq("id", next.id);
 
-        // Fetch full article content now, since discovery deferred it.
-        const articleContent =
-          await fetchArticleContent(
-            next.article_url,
-            next.summary
-          );
+        const articleContent = await fetchArticleContent(
+          next.article_url,
+          next.summary
+        );
 
         await adminSupabase
           .from("incident_candidates")
@@ -456,8 +323,7 @@ async function runDiscovery(
             article_text: articleContent.text,
             article_text_source: articleContent.source,
             article_text_fetched_at: new Date().toISOString(),
-            article_text_length:
-              articleContent.text?.length ?? 0,
+            article_text_length: articleContent.text?.length ?? 0,
             article_fetch_status: articleContent.status,
           })
           .eq("id", next.id);
@@ -506,7 +372,6 @@ async function runDiscovery(
          * Auto-decide
          * ------------------------------------------------------
          */
-
         const requiredFieldsPresent = Boolean(
           result.company &&
             result.severity &&
@@ -514,10 +379,7 @@ async function runDiscovery(
             result.incident_description
         );
 
-        if (
-          !result.is_incident ||
-          result.recommendation === "reject"
-        ) {
+        if (!result.is_incident || result.recommendation === "reject") {
           await adminSupabase
             .from("incident_candidates")
             .update({
@@ -532,44 +394,23 @@ async function runDiscovery(
           result.confidence >= MIN_AUTO_PUBLISH_CONFIDENCE &&
           requiredFieldsPresent
         ) {
-          /*
-           * --------------------------------------------------
-           * Duplicate check
-           * --------------------------------------------------
-           *
-           * Different publishers often cover the same incident
-           * with very different wording, so this doesn't gate
-           * on the "company" field matching exactly (extraction
-           * varies between review passes) or rely on word-overlap
-           * alone (different outlets share almost no words
-           * describing the same event). Pull a pool of recent
-           * incidents regardless of company, cheaply shortlist
-           * the most textually similar few, then ask an LLM to
-           * make the actual same-event judgment. If it's the
-           * same event, attach this article as an additional
-           * source instead of publishing a duplicate incident.
-           */
-
-          const { data: recentIncidents } =
-            await adminSupabase
-              .from("incidents")
-              .select(
-                "id, title, summary, description, additional_sources"
-              )
-              .order("created_at", { ascending: false })
-              .limit(40);
+          const { data: recentIncidents } = await adminSupabase
+            .from("incidents")
+            .select("id, title, summary, description, additional_sources")
+            .order("created_at", { ascending: false })
+            .limit(40);
 
           const shortlist = topMatches(
             `${result.incident_summary} ${result.incident_description}`,
             recentIncidents ?? [],
-            (incident) =>
-              `${incident.summary} ${incident.description}`,
+            (incident) => `${incident.summary} ${incident.description}`,
             5
           );
 
-          let duplicateMatch:
-            | { item: (typeof shortlist)[number]["item"]; score: number }
-            | null = null;
+          let duplicateMatch: {
+            item: (typeof shortlist)[number]["item"];
+            score: number;
+          } | null = null;
 
           if (shortlist.length > 0) {
             try {
@@ -620,8 +461,7 @@ async function runDiscovery(
                     title: next.title,
                   },
                 ],
-                updated_at_timestamp:
-                  new Date().toISOString(),
+                updated_at_timestamp: new Date().toISOString(),
               })
               .eq("id", duplicateMatch.item.id);
 
@@ -636,22 +476,20 @@ async function runDiscovery(
 
             duplicatesMerged++;
           } else {
-            const { error: publishError } =
-              await adminSupabase.rpc(
-                "publish_incident_candidate",
-                {
-                  p_candidate_id: next.id,
-                  p_title: next.title,
-                  p_company: result.company as string,
-                  p_model: result.model,
-                  p_severity: result.severity as string,
-                  p_category: result.category,
-                  p_occurred_at: next.published_at,
-                  p_summary: result.incident_summary as string,
-                  p_description:
-                    result.incident_description as string,
-                }
-              );
+            const { error: publishError } = await adminSupabase.rpc(
+              "publish_incident_candidate",
+              {
+                p_candidate_id: next.id,
+                p_title: next.title,
+                p_company: result.company as string,
+                p_model: result.model,
+                p_severity: result.severity as string,
+                p_category: result.category,
+                p_occurred_at: next.published_at,
+                p_summary: result.incident_summary as string,
+                p_description: result.incident_description as string,
+              }
+            );
 
             if (publishError) {
               console.error(
@@ -681,8 +519,6 @@ async function runDiscovery(
             }
           }
         } else {
-          // "review" recommendation, low confidence, or missing
-          // fields required to publish — a human decides this one.
           await adminSupabase
             .from("incident_candidates")
             .update({
@@ -694,11 +530,7 @@ async function runDiscovery(
           leftForHuman++;
         }
       } catch (reviewError) {
-        console.error(
-          `Review failed for ${next.article_url}:`,
-          reviewError
-        );
-
+        console.error(`Review failed for ${next.article_url}:`, reviewError);
         reviewFailed++;
 
         await adminSupabase
@@ -729,69 +561,36 @@ async function runDiscovery(
      * 6. Mark discovery successful
      * ----------------------------------------------------------
      */
-
     if (discoveryRunId) {
-      const {
-        error,
-      } =
-        await adminSupabase
-          .from("discovery_runs")
-          .update({
-            completed_at:
-              new Date().toISOString(),
-
-            status:
-              "success",
-
-            discovered:
-              candidates.length,
-
-            inserted,
-          })
-          .eq(
-            "id",
-            discoveryRunId
-          );
+      const { error } = await adminSupabase
+        .from("discovery_runs")
+        .update({
+          completed_at: new Date().toISOString(),
+          status: "success",
+          discovered: rawCandidates.length,
+          inserted,
+        })
+        .eq("id", discoveryRunId);
 
       if (error) {
-        console.error(
-          "Failed to update discovery run:",
-          error
-        );
+        console.error("Failed to update discovery run:", error);
       }
     }
-
-    /*
-     * ----------------------------------------------------------
-     * 7. Logging
-     * ----------------------------------------------------------
-     */
 
     console.log(
       [
         "Frontier discovery complete.",
-        `Found ${candidates.length}.`,
+        `Found ${rawCandidates.length}.`,
         `Inserted ${inserted}.`,
         `Duplicates ${duplicates}.`,
       ].join(" ")
     );
 
-    /*
-     * ----------------------------------------------------------
-     * 8. Return results
-     * ----------------------------------------------------------
-     */
-
     return NextResponse.json({
       success: true,
-
-      discovered:
-        candidates.length,
-
+      discovered: rawCandidates.length,
       inserted,
-
       duplicates,
-
       review: {
         reviewed,
         auto_published: autoPublished,
@@ -802,36 +601,18 @@ async function runDiscovery(
       },
     });
   } catch (error) {
-    console.error(
-      "Discovery failed:",
-      error
-    );
-
-    /*
-     * ----------------------------------------------------------
-     * 9. Record discovery failure
-     * ----------------------------------------------------------
-     */
+    console.error("Discovery failed:", error);
 
     if (discoveryRunId) {
       await adminSupabase
         .from("discovery_runs")
         .update({
-          completed_at:
-            new Date().toISOString(),
-
-          status:
-            "failed",
-
+          completed_at: new Date().toISOString(),
+          status: "failed",
           error_message:
-            error instanceof Error
-              ? error.message
-              : "Unknown discovery error",
+            error instanceof Error ? error.message : "Unknown discovery error",
         })
-        .eq(
-          "id",
-          discoveryRunId
-        );
+        .eq("id", discoveryRunId);
     }
 
     return NextResponse.json(
@@ -841,9 +622,7 @@ async function runDiscovery(
             ? error.message
             : "Discovery process failed.",
       },
-      {
-        status: 500,
-      }
+      { status: 500 }
     );
   }
 }
