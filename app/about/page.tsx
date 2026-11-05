@@ -48,17 +48,17 @@ export default function AboutPage() {
             </p>
 
             <h2 className="mt-4 text-3xl font-bold tracking-tight sm:text-4xl">
-              Make AI incidents easier to understand.
+              Make AI incidents easier to understand and track.
             </h2>
           </div>
 
           <div className="space-y-5 text-lg leading-7 text-slate-400">
             <p>
               AI systems are becoming increasingly capable and
-              increasingly autonomous. As that happens, incidents
-              involving unexpected model behavior are becoming an
-              important source of information about the limits and
-              risks of these systems.
+              autonomous. As that happens, incidents involving 
+              unexpected model behavior are becoming an important 
+              source of information about the limits and risks of 
+              these systems.
             </p>
 
             <p>
@@ -70,9 +70,10 @@ export default function AboutPage() {
 
             <p>
               Frontier brings these reports together into a structured
-              record so that researchers, developers, policymakers,
+              record so that AI labs, researchers, developers, policymakers,
               and anyone interested in AI safety can more easily
-              understand what happened and identify broader patterns.
+              understand what happened and identify broader patterns, so they
+              are better prepared for the future.
             </p>
           </div>
         </div>
