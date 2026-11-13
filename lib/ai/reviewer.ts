@@ -1,6 +1,7 @@
 // lib/ai/reviewer.ts
 
-const GROQ_MODEL = "llama-3.3-70b-versatile"; // Fallback: "llama3-70b-8192"
+// Updated to an active model ID on Groq
+const GROQ_MODEL = "llama-3.1-8b-instant";
 const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
 export type AIReviewResult = {
@@ -60,9 +61,6 @@ function cleanText(text: string) {
     .trim();
 }
 
-/**
- * Extract readable text from an HTML document.
- */
 export function extractArticleText(html: string): string {
   let text = html;
 
@@ -88,77 +86,12 @@ export function extractArticleText(html: string): string {
   return cleanText(text);
 }
 
-async function fetchArticleText(url: string): Promise<string | null> {
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      redirect: "follow",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 FrontierResearchBot/1.0",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!response.ok) {
-      console.warn(`Article fetch returned status ${response.status} for ${url}. Falling back to summary.`);
-      return null;
-    }
-
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("text/html") && !contentType.includes("application/xhtml+xml")) {
-      return null;
-    }
-
-    const html = await response.text();
-    const text = extractArticleText(html);
-
-    if (text.length < 200) {
-      return null;
-    }
-
-    return truncateText(text, 50000);
-  } catch (error) {
-    console.warn(`Unable to fetch article content for ${url}. Proceeding with RSS metadata:`, error);
-    return null;
-  }
-}
-
 function buildPrompt(article: ArticleInput) {
   return `
 You are the automated incident-review system for Frontier.
-
 Frontier is a public database tracking SIGNIFICANT AI INCIDENTS.
 
 A Frontier incident is a documented case where an AI model or AI-powered system behaved outside the intended scope, instructions, constraints, or safety boundaries of the task it was given.
-
-Examples include:
-- An AI agent taking unauthorized actions.
-- An AI system accessing resources it was not supposed to access.
-- A model deliberately deceiving an evaluator or operator.
-- An AI agent bypassing restrictions or safeguards.
-- An AI system attempting unauthorized replication, persistence, exfiltration, or escape.
-- An AI system behaving unexpectedly in a real deployment or controlled experiment in a way that materially exceeded the intended task.
-- A model exploiting a reward or evaluation system in an unintended way when the behavior demonstrates a meaningful scope or objective violation.
-
-IMPORTANT:
-Do NOT classify something as an incident merely because the article:
-- discusses AI risk hypothetically;
-- says AI "could go rogue";
-- discusses future possibilities;
-- reports a normal model hallucination without meaningful consequences;
-- describes a benchmark without an actual behavioral violation;
-- describes an ordinary cybersecurity attack against an AI company without the AI itself behaving outside its intended scope;
-- is an opinion article;
-- repeats an old incident without providing meaningful new information.
-
-The distinction between "AI might do X" and "AI actually did X" is fundamental.
-You must only treat observed, documented behavior as an incident.
-
-Do NOT invent facts that are not supported by the supplied material.
-If the article does not establish a fact, return an EMPTY STRING for that field.
 
 ARTICLE INFORMATION:
 Title: ${article.title}
@@ -193,26 +126,6 @@ Return ONLY valid JSON with this exact structure:
   "reasoning": "",
   "additional_sources": []
 }
-
-Field rules:
-is_incident: boolean — whether the source describes a real observed AI behavioral incident.
-confidence: integer 0-100 — confidence that this qualifies as a significant Frontier AI incident.
-recommendation: exactly one of "publish", "review", "reject".
-company: the company/organization responsible for the AI system, or "" if unknown.
-model: the AI model involved, or "" if unknown.
-category: exactly one of "Autonomous Agent", "Cybersecurity", "Deception", "Hallucination", "Privacy", "Safety", "Manipulation", "Unauthorized Action", "Other".
-severity: exactly one of "Low", "Moderate", "High", "Critical".
-incident_summary: concise summary of the documented incident, or "" if not established.
-incident_description: detailed description of what the AI system actually did, or "" if not established.
-intended_behavior: the intended instructions/task/behavior, or "" if not established.
-observed_behavior: the observed behavior that differed from the intended behavior, or "" if not established.
-scope_violation: why the observed behavior exceeded the intended scope or constraints, or "" if not established.
-evidence_summary: summary of the evidence supporting or weakening the incident claim.
-evidence_quality: integer 0-100.
-reasoning: your reasoning for the classification and recommendation.
-additional_sources: an array of objects with "name", "url", and "relevance" string fields.
-
-Respond with JSON only, no other text.
 `;
 }
 
@@ -231,16 +144,7 @@ export async function reviewCandidate(article: ArticleInput): Promise<AIReviewRe
     throw new Error("GROQ_API_KEY is not configured in your environment variables.");
   }
 
-  // Safely attempt to fetch article text without halting review if blocked (403/404)
-  let articleText = article.articleText;
-  if (!articleText) {
-    articleText = await fetchArticleText(article.articleUrl);
-  }
-
-  const prompt = buildPrompt({
-    ...article,
-    articleText,
-  });
+  const prompt = buildPrompt(article);
 
   const response = await fetch(GROQ_API_URL, {
     method: "POST",
@@ -287,7 +191,7 @@ export async function reviewCandidate(article: ArticleInput): Promise<AIReviewRe
     throw new Error("Groq returned invalid JSON format.");
   }
 
-  const result: AIReviewResult = {
+  return {
     is_incident: Boolean(rawResult.is_incident),
     confidence: Number(rawResult.confidence || 0),
     recommendation: rawResult.recommendation || "reject",
@@ -311,6 +215,4 @@ export async function reviewCandidate(article: ArticleInput): Promise<AIReviewRe
         }))
       : [],
   };
-
-  return result;
 }
